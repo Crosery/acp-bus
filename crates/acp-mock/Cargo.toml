@@ -1,0 +1,9 @@
+[package]
+name = "acp-mock"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+acp-protocol = { path = "../acp-protocol" }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"

@@ -1,0 +1,42 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/acp-protocol",
+    "crates/acp-core",
+    "crates/acp-server",
+    "crates/acp-tui",
+    "crates/acp-mock",
+    "crates/acp-bus-mcp",
+    ".",
+]
+
+[workspace.dependencies]
+acp-protocol = { path = "crates/acp-protocol" }
+acp-core = { path = "crates/acp-core" }
+acp-server = { path = "crates/acp-server" }
+acp-tui = { path = "crates/acp-tui" }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+
+[package]
+name = "acp-bus"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+acp-core.workspace = true
+acp-server.workspace = true
+acp-tui.workspace = true
+clap = { version = "4", features = ["derive"] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+ratatui = "0.29"
+crossterm = "0.28"

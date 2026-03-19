@@ -1,0 +1,123 @@
+use std::io::Write;
+
+use serde_json::{json, Value};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixStream;
+
+#[tokio::main]
+async fn main() {
+    let socket_path = std::env::var("ACP_BUS_SOCKET").unwrap_or_default();
+    let agent_name = std::env::var("ACP_BUS_AGENT_NAME").unwrap_or_else(|_| "unknown".into());
+
+    let stdin = tokio::io::stdin();
+    let mut lines = BufReader::new(stdin).lines();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        let msg: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let id = msg.get("id").cloned();
+        let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
+
+        let result = match method {
+            "initialize" => json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "acp-bus-mcp", "version": "0.1.0" }
+            }),
+            "notifications/initialized" => continue,
+            "tools/list" => json!({
+                "tools": [
+                    {
+                        "name": "bus_send_message",
+                        "description": "Send a message to another agent in the acp-bus channel",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "to": { "type": "string", "description": "Target agent name" },
+                                "content": { "type": "string", "description": "Message content" }
+                            },
+                            "required": ["to", "content"]
+                        }
+                    },
+                    {
+                        "name": "bus_list_agents",
+                        "description": "List all agents in the acp-bus channel with their status",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    }
+                ]
+            }),
+            "tools/call" => {
+                let params = msg.get("params").cloned().unwrap_or(json!({}));
+                let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let args = params.get("arguments").cloned().unwrap_or(json!({}));
+
+                let resp = call_socket(&socket_path, &agent_name, tool_name, &args).await;
+                json!({ "content": [{ "type": "text", "text": resp }] })
+            }
+            _ => {
+                // Unknown method — send error
+                let resp = json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32601, "message": format!("method not found: {method}") }
+                });
+                write_response(&resp);
+                continue;
+            }
+        };
+
+        let resp = json!({ "jsonrpc": "2.0", "id": id, "result": result });
+        write_response(&resp);
+    }
+}
+
+fn write_response(resp: &Value) {
+    let mut stdout = std::io::stdout().lock();
+    let _ = serde_json::to_writer(&mut stdout, resp);
+    let _ = stdout.write_all(b"\n");
+    let _ = stdout.flush();
+}
+
+async fn call_socket(socket_path: &str, agent_name: &str, tool: &str, args: &Value) -> String {
+    if socket_path.is_empty() {
+        return r#"{"error":"ACP_BUS_SOCKET not set"}"#.to_string();
+    }
+
+    let req = match tool {
+        "bus_send_message" => {
+            let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("");
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            json!({ "type": "send_message", "from": agent_name, "to": to, "content": content })
+        }
+        "bus_list_agents" => {
+            json!({ "type": "list_agents", "from": agent_name })
+        }
+        _ => return r#"{"error":"unknown tool"}"#.to_string(),
+    };
+
+    let stream = match UnixStream::connect(socket_path).await {
+        Ok(s) => s,
+        Err(e) => return format!(r#"{{"error":"connect failed: {e}"}}"#),
+    };
+
+    let (reader, mut writer) = stream.into_split();
+    let mut line = req.to_string();
+    line.push('\n');
+    if writer.write_all(line.as_bytes()).await.is_err() {
+        return r#"{"error":"write failed"}"#.to_string();
+    }
+    let _ = writer.shutdown().await;
+
+    let mut lines = BufReader::new(reader).lines();
+    match lines.next_line().await {
+        Ok(Some(resp)) => resp,
+        Ok(None) => r#"{"error":"no response"}"#.to_string(),
+        Err(e) => format!(r#"{{"error":"read failed: {e}"}}"#),
+    }
+}

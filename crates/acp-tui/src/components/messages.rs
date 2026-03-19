@@ -1,0 +1,260 @@
+use ratatui::prelude::*;
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use regex::Regex;
+use std::sync::LazyLock;
+
+use acp_core::channel::{Message, MessageKind, MessageStatus};
+
+use crate::theme;
+
+static MENTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@([a-zA-Z0-9_-]+)").unwrap());
+
+pub struct MessagesView {
+    lines: Vec<MessageLine>,
+    scroll_offset: u16,
+    total_rendered_lines: u16,
+    /// Filter to a specific agent. None = show all.
+    pub filter: Option<String>,
+    /// Live streaming previews: (agent_name, partial_content)
+    pub streaming: Vec<(String, String)>,
+}
+
+#[derive(Clone)]
+struct MessageLine {
+    from: String,
+    to: Option<String>,
+    content: String,
+    kind: MessageKind,
+    status: MessageStatus,
+    error: Option<String>,
+    timestamp: String,
+    gap: Option<String>,
+}
+
+impl MessagesView {
+    pub fn new() -> Self {
+        Self {
+            lines: Vec::new(),
+            scroll_offset: 0,
+            total_rendered_lines: 0,
+            filter: None,
+            streaming: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, message: &Message, gap: Option<i64>) {
+        let ts = chrono::DateTime::from_timestamp(message.timestamp, 0)
+            .map(|dt| dt.format("%H:%M:%S").to_string())
+            .unwrap_or_default();
+
+        let gap_str = gap.and_then(|g| {
+            if g >= 60 {
+                Some(format!("+{}m{}s", g / 60, g % 60))
+            } else if g >= 2 {
+                Some(format!("+{g}s"))
+            } else {
+                None
+            }
+        });
+
+        self.lines.push(MessageLine {
+            from: message.from.clone(),
+            to: message.to.clone(),
+            content: message.content.clone(),
+            kind: message.kind.clone(),
+            status: message.status.clone(),
+            error: message.error.clone(),
+            timestamp: ts,
+            gap: gap_str,
+        });
+    }
+
+    pub fn scroll_down(&mut self, n: u16) {
+        self.scroll_offset = self.scroll_offset.saturating_add(n);
+    }
+
+    pub fn scroll_up(&mut self, n: u16) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(n);
+    }
+
+    pub fn scroll_to_bottom(&mut self, visible_height: u16) {
+        if self.total_rendered_lines > visible_height {
+            self.scroll_offset = self.total_rendered_lines - visible_height;
+        } else {
+            self.scroll_offset = 0;
+        }
+    }
+
+    pub fn scroll_to_top(&mut self) {
+        self.scroll_offset = 0;
+    }
+
+    pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::BORDER);
+
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        let text = self.build_text(inner.width);
+        self.total_rendered_lines = text.len() as u16;
+
+        let paragraph = Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .scroll((self.scroll_offset, 0));
+        paragraph.render(inner, buf);
+    }
+
+    fn build_text(&self, _width: u16) -> Vec<Line<'static>> {
+        let mut text: Vec<Line<'static>> = Vec::new();
+
+        // Filter lines based on selected agent
+        let filtered: Vec<&MessageLine> = self
+            .lines
+            .iter()
+            .filter(|line| {
+                match &self.filter {
+                    None => true, // System tab: show ALL messages
+                    Some(agent) => {
+                        // System messages (grey) — ONLY in System tab
+                        if line.kind == MessageKind::System || line.kind == MessageKind::Audit {
+                            return false;
+                        }
+                        // Messages FROM this agent
+                        if line.from == *agent {
+                            return true;
+                        }
+                        // Messages directed TO this agent
+                        if line.to.as_deref() == Some(agent.as_str()) {
+                            return true;
+                        }
+                        false
+                    }
+                }
+            })
+            .collect();
+
+        for (i, line) in filtered.iter().enumerate() {
+            // Separator between messages
+            if i > 0 {
+                text.push(Line::from(Span::styled(
+                    "─".repeat(40),
+                    Style::default().fg(Color::Rgb(60, 60, 60)),
+                )));
+            }
+
+            // Header line: name + timestamp
+            let name_style = if line.status == MessageStatus::Failed {
+                Style::default().fg(Color::LightRed)
+            } else if line.kind == MessageKind::Task {
+                Style::default().fg(Color::LightBlue)
+            } else if line.from == "系统" {
+                theme::SYSTEM_MSG
+            } else if line.from == "you" || line.from == "你" {
+                theme::USER_MSG
+            } else {
+                theme::AGENT_MSG
+            };
+
+            let mut header = vec![Span::styled(
+                match &line.to {
+                    Some(to) => format!("{} -> {}", line.from, to),
+                    None => line.from.clone(),
+                },
+                name_style.add_modifier(Modifier::BOLD),
+            )];
+
+            if !line.timestamp.is_empty() {
+                header.push(Span::raw("  "));
+                let ts_text = if let Some(ref gap) = line.gap {
+                    format!("{} · {}", line.timestamp, gap)
+                } else {
+                    line.timestamp.clone()
+                };
+                header.push(Span::styled(ts_text, theme::TIMESTAMP));
+            }
+            text.push(Line::from(header));
+
+            // Content lines with @mention highlighting
+            if line.kind == MessageKind::System || line.kind == MessageKind::Audit {
+                // System messages: dimmed, single line
+                text.push(Line::from(Span::styled(
+                    line.content.clone(),
+                    theme::SYSTEM_MSG,
+                )));
+                if let Some(error) = &line.error {
+                    text.push(Line::from(Span::styled(
+                        format!("error: {error}"),
+                        Style::default().fg(Color::Red),
+                    )));
+                }
+            } else {
+                // User/Agent messages: highlight @mentions
+                for content_line in line.content.lines() {
+                    text.push(Line::from(highlight_mentions(content_line)));
+                }
+                if let Some(error) = &line.error {
+                    text.push(Line::from(Span::styled(
+                        format!("error: {error}"),
+                        Style::default().fg(Color::Red),
+                    )));
+                }
+            }
+        }
+
+        // Append live streaming previews
+        for (name, buf) in &self.streaming {
+            if buf.is_empty() {
+                continue;
+            }
+            // Apply filter
+            if let Some(ref f) = self.filter {
+                if name != f {
+                    continue;
+                }
+            }
+
+            if !text.is_empty() {
+                text.push(Line::from(Span::styled(
+                    "─".repeat(40),
+                    Style::default().fg(Color::Rgb(60, 60, 60)),
+                )));
+            }
+
+            text.push(Line::from(vec![
+                Span::styled(name.clone(), theme::AGENT_MSG.add_modifier(Modifier::BOLD)),
+                Span::styled("  ▍streaming", Style::default().fg(Color::Yellow)),
+            ]));
+            for content_line in buf.lines() {
+                text.push(Line::from(highlight_mentions(content_line)));
+            }
+        }
+
+        text
+    }
+}
+
+/// Highlight @mentions in yellow, rest in default color
+fn highlight_mentions(text: &str) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut last_end = 0;
+
+    for mat in MENTION_RE.find_iter(text) {
+        if mat.start() > last_end {
+            spans.push(Span::raw(text[last_end..mat.start()].to_string()));
+        }
+        spans.push(Span::styled(mat.as_str().to_string(), theme::MENTION));
+        last_end = mat.end();
+    }
+
+    if last_end < text.len() {
+        spans.push(Span::raw(text[last_end..].to_string()));
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::raw(text.to_string()));
+    }
+
+    spans
+}

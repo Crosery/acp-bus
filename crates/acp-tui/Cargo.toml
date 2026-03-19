@@ -1,0 +1,19 @@
+[package]
+name = "acp-tui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+acp-protocol.workspace = true
+acp-core.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+futures = "0.3"
+regex = "1"
+unicode-width = "0.2"
