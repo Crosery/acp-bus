@@ -110,7 +110,23 @@ impl MessagesView {
 
         self.visible_height = inner.height;
         let text = self.build_text(inner.width);
-        self.total_rendered_lines = text.len() as u16;
+
+        // Calculate actual rendered lines accounting for word wrap
+        let wrapped_lines: u16 = if inner.width > 0 {
+            text.iter()
+                .map(|line| {
+                    let w: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+                    if w == 0 {
+                        1u16
+                    } else {
+                        ((w as u16).saturating_sub(1) / inner.width + 1).max(1)
+                    }
+                })
+                .sum()
+        } else {
+            text.len() as u16
+        };
+        self.total_rendered_lines = wrapped_lines;
 
         // Auto-scroll to bottom when following new messages
         if self.auto_scroll && self.total_rendered_lines > inner.height {

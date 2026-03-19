@@ -1114,18 +1114,49 @@ async fn execute_agent_commands(
     mcp_command: Option<String>,
     scheduler: SharedScheduler,
 ) -> Vec<String> {
-    let mut added = Vec::new();
+    // Pre-parse: group multi-line /add commands (continuation lines don't start with / or @)
+    let mut commands: Vec<String> = Vec::new();
     for line in reply.lines() {
         let trimmed = line.trim();
+        if trimmed.starts_with('/') || trimmed.starts_with('@') {
+            commands.push(trimmed.to_string());
+        } else if !trimmed.is_empty() {
+            // Continuation of previous command
+            if let Some(last) = commands.last_mut() {
+                last.push('\n');
+                last.push_str(trimmed);
+            }
+        }
+    }
+
+    let mut added = Vec::new();
+    for cmd_line in &commands {
+        let trimmed = cmd_line.as_str();
         if trimmed.starts_with("/add ") {
-            let parts: Vec<&str> = trimmed.splitn(4, ' ').collect();
+            // Split only the first line for name/adapter, rest is task
+            let first_line = trimmed.lines().next().unwrap_or(trimmed);
+            let parts: Vec<&str> = first_line.splitn(4, ' ').collect();
             if parts.len() >= 3 {
                 let agent_name = parts[1].to_string();
                 let adapter_name = parts[2].to_string();
-                let task = if parts.len() >= 4 {
-                    Some(parts[3].to_string())
+                // Task = remainder of first line + all continuation lines
+                let first_line_task = if parts.len() >= 4 { parts[3] } else { "" };
+                let continuation: String = trimmed
+                    .lines()
+                    .skip(1)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let full_task = if continuation.is_empty() {
+                    first_line_task.to_string()
+                } else if first_line_task.is_empty() {
+                    continuation
                 } else {
+                    format!("{first_line_task}\n{continuation}")
+                };
+                let task = if full_task.is_empty() {
                     None
+                } else {
+                    Some(full_task)
                 };
                 let exists = {
                     let ch = channel.lock().await;
