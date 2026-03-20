@@ -102,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
                 stdout,
                 crossterm::terminal::EnterAlternateScreen,
                 crossterm::event::EnableBracketedPaste,
+                crossterm::event::EnableMouseCapture,
             )?;
             let backend = ratatui::backend::CrosstermBackend::new(stdout);
             let mut terminal = ratatui::Terminal::new(backend)?;
@@ -115,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
                 terminal.backend_mut(),
                 crossterm::terminal::LeaveAlternateScreen,
                 crossterm::event::DisableBracketedPaste,
+                crossterm::event::DisableMouseCapture,
             )?;
             terminal.show_cursor()?;
 

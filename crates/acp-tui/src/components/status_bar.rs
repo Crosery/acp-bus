@@ -1,7 +1,10 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders};
 
-use crate::theme;
+pub struct ToolCallDisplay {
+    pub name: String,
+    pub running: bool,
+}
 
 pub struct AgentDisplay {
     pub name: String,
@@ -13,6 +16,7 @@ pub struct AgentDisplay {
     pub waiting_reply_from: Option<String>,
     pub waiting_since: Option<i64>,
     pub waiting_conversation_id: Option<u64>,
+    pub tool_calls: Vec<ToolCallDisplay>,
 }
 
 pub struct StatusBar {
@@ -25,27 +29,18 @@ fn active_for_secs(agent: &AgentDisplay) -> Option<i64> {
     Some((now - start).max(0))
 }
 
-fn status_label(agent: &AgentDisplay) -> (&'static str, Style) {
+fn status_char(agent: &AgentDisplay) -> (&'static str, Style) {
     if agent.status == "error" || agent.status == "disconnected" {
-        return ("ERR", theme::STATUS_ERROR_BADGE);
+        ("✗", Style::default().fg(Color::Red))
+    } else if agent.status == "streaming" || agent.activity.is_some() {
+        ("●", Style::default().fg(Color::Green))
+    } else if agent.status == "connecting" {
+        ("◌", Style::default().fg(Color::Yellow))
+    } else if agent.waiting_reply_from.is_some() {
+        ("◎", Style::default().fg(Color::Cyan))
+    } else {
+        ("○", Style::default().fg(Color::Rgb(80, 90, 110)))
     }
-    if agent.waiting_reply_from.is_some() {
-        return ("WAIT", theme::STATUS_THINKING);
-    }
-    let activity = agent.activity.as_deref().unwrap_or("");
-    if activity == "thinking" {
-        return ("…", Style::default().fg(Color::Yellow));
-    }
-    if agent.status == "streaming" || !activity.is_empty() {
-        return ("●", Style::default().fg(Color::Green));
-    }
-    if agent.status == "connecting" {
-        return ("◌", Style::default().fg(Color::DarkGray));
-    }
-    if agent.status == "idle" {
-        return ("○", Style::default().fg(Color::DarkGray));
-    }
-    ("?", Style::default().fg(Color::DarkGray))
 }
 
 impl StatusBar {
@@ -76,47 +71,81 @@ impl StatusBar {
             return;
         }
 
+        let mut y = inner.y + 1; // top padding
+        let max_y = inner.y + inner.height;
+        let w = inner.width;
+
         for (i, agent) in agents.iter().enumerate() {
-            if i as u16 >= inner.height {
+            if y >= max_y {
                 break;
             }
-            let y = inner.y + i as u16;
+
             let is_selected = i == self.selected;
+            let (icon, icon_style) = status_char(agent);
 
-            let (icon, icon_style) = status_label(agent);
-
+            // Agent line
             let mut spans = vec![];
-
-            // Selection indicator
             if is_selected {
-                spans.push(Span::styled("▸", Style::default().fg(Color::Cyan)));
+                spans.push(Span::styled(" ▸ ", Style::default().fg(Color::Cyan)));
             } else {
-                spans.push(Span::raw(" "));
+                spans.push(Span::raw("   "));
             }
+            spans.push(Span::styled(format!("{icon} "), icon_style));
 
-            // Status icon
-            spans.push(Span::styled(icon, icon_style));
-
-            // Agent name
             let name_style = if is_selected {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Rgb(140, 150, 170))
+                Style::default().fg(Color::Rgb(160, 170, 190))
             };
-            let max_name = (inner.width as usize).saturating_sub(3);
+            let max_name = (w as usize).saturating_sub(6);
             let name: String = agent.name.chars().take(max_name).collect();
             spans.push(Span::styled(name, name_style));
 
-            // Timer (if active, show on same line if space permits)
-            if let Some(secs) = active_for_secs(agent) {
-                let timer = format!(" {secs}s");
-                if spans.iter().map(|s| s.content.len()).sum::<usize>() + timer.len() <= inner.width as usize {
-                    spans.push(Span::styled(timer, Style::default().fg(Color::Yellow)));
+            buf.set_line(inner.x, y, &Line::from(spans), w);
+            y += 1;
+
+            // Timer + current activity (second line, indented)
+            let has_detail = active_for_secs(agent).is_some()
+                || agent.waiting_reply_from.is_some()
+                || agent.tool_calls.iter().any(|tc| tc.running);
+
+            if has_detail && y < max_y {
+                let mut detail = vec![Span::raw("     ")]; // indent
+
+                if let Some(secs) = active_for_secs(agent) {
+                    let t = if secs >= 60 {
+                        format!("{}m{}s", secs / 60, secs % 60)
+                    } else {
+                        format!("{secs}s")
+                    };
+                    detail.push(Span::styled(t, Style::default().fg(Color::Yellow)));
                 }
+
+                // Show current running tool
+                if let Some(tc) = agent.tool_calls.iter().find(|tc| tc.running) {
+                    let max_tool = (w as usize).saturating_sub(12);
+                    let tool_name: String = tc.name.chars().take(max_tool).collect();
+                    detail.push(Span::styled(
+                        format!(" {tool_name}"),
+                        Style::default().fg(Color::Rgb(180, 160, 100)),
+                    ));
+                }
+
+                // Show waiting target
+                if let Some(ref target) = agent.waiting_reply_from {
+                    let max_t = (w as usize).saturating_sub(10);
+                    let t: String = target.chars().take(max_t).collect();
+                    detail.push(Span::styled(
+                        format!(" →{t}"),
+                        Style::default().fg(Color::Cyan),
+                    ));
+                }
+
+                buf.set_line(inner.x, y, &Line::from(detail), w);
+                y += 1;
             }
 
-            let line = Line::from(spans);
-            buf.set_line(inner.x, y, &line, inner.width);
+            // No extra spacing — keep sidebar compact
         }
     }
 }

@@ -27,6 +27,21 @@ impl fmt::Display for AgentStatus {
     }
 }
 
+/// A tool call record for sidebar display
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    pub name: String,
+    pub status: ToolCallStatus,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolCallStatus {
+    Running,
+    Done,
+}
+
+const MAX_TOOL_HISTORY: usize = 5;
+
 #[derive(Debug, Clone)]
 pub struct Agent {
     pub name: String,
@@ -46,6 +61,8 @@ pub struct Agent {
     pub waiting_since: Option<i64>,
     pub waiting_conversation_id: Option<u64>,
     pub last_closed_conversation_id: Option<u64>,
+    /// Recent tool calls (newest first, max 5)
+    pub tool_calls: Vec<ToolCall>,
 }
 
 impl Agent {
@@ -68,6 +85,7 @@ impl Agent {
             waiting_since: None,
             waiting_conversation_id: None,
             last_closed_conversation_id: None,
+            tool_calls: Vec::new(),
         }
     }
 
@@ -90,11 +108,32 @@ impl Agent {
             waiting_since: None,
             waiting_conversation_id: None,
             last_closed_conversation_id: None,
+            tool_calls: Vec::new(),
         }
     }
 
     pub fn is_alive(&self) -> bool {
         self.alive
+    }
+
+    pub fn push_tool_call(&mut self, name: String) {
+        // Mark previous running tool as done
+        if let Some(last) = self.tool_calls.first_mut() {
+            last.status = ToolCallStatus::Done;
+        }
+        self.tool_calls.insert(0, ToolCall {
+            name,
+            status: ToolCallStatus::Running,
+        });
+        if self.tool_calls.len() > MAX_TOOL_HISTORY {
+            self.tool_calls.truncate(MAX_TOOL_HISTORY);
+        }
+    }
+
+    pub fn finish_tool_calls(&mut self) {
+        for tc in &mut self.tool_calls {
+            tc.status = ToolCallStatus::Done;
+        }
     }
 
     pub fn reset_stream(&mut self) {

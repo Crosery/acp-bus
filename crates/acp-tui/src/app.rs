@@ -14,7 +14,7 @@ use acp_core::router;
 
 use crate::components::input::InputBox;
 use crate::components::messages::MessagesView;
-use crate::components::status_bar::{AgentDisplay, StatusBar};
+use crate::components::status_bar::{AgentDisplay, StatusBar, ToolCallDisplay};
 
 use crate::layout::AppLayout;
 
@@ -120,6 +120,14 @@ impl App {
                         match evt {
                             Event::Key(key) => self.handle_key(key).await,
                             Event::Paste(text) => self.input.insert_str(&text),
+                            Event::Mouse(mouse) => {
+                                use crossterm::event::{MouseEventKind};
+                                match mouse.kind {
+                                    MouseEventKind::ScrollUp => self.messages.scroll_up(3),
+                                    MouseEventKind::ScrollDown => self.messages.scroll_down(3),
+                                    _ => {}
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -152,11 +160,14 @@ impl App {
             }
         }
 
-        // Cleanup
-        let mut clients = self.clients.lock().await;
-        for (_, client) in clients.drain() {
-            let mut c = client.lock().await;
-            c.stop().await;
+        // Cleanup: force-kill all agents immediately
+        {
+            let clients = self.clients.lock().await;
+            for (_, client) in clients.iter() {
+                if let Ok(c) = client.try_lock() {
+                    c.force_kill();
+                }
+            }
         }
 
         // Remove bus socket
@@ -182,7 +193,16 @@ impl App {
                 log_entry.content = Some(content.clone());
                 let result = {
                     let mut ch = self.channel.lock().await;
-                    if !ch.agents.contains_key(&to_agent) {
+                    if from_agent == to_agent {
+                        ch.post_audit(&format!(
+                            "bus send rejected: {from_agent} cannot send to itself"
+                        ));
+                        BusSendResult {
+                            message_id: None,
+                            delivered: false,
+                            error: Some("cannot send message to yourself".to_string()),
+                        }
+                    } else if !ch.agents.contains_key(&to_agent) {
                         let _ = ch.post_message(
                             &from_agent,
                             Some(to_agent.clone()),
@@ -305,6 +325,7 @@ impl App {
             waiting_reply_from: None,
             waiting_since: None,
             waiting_conversation_id: None,
+            tool_calls: Vec::new(),
         });
         self.messages.streaming.clear();
 
@@ -320,6 +341,10 @@ impl App {
                 waiting_reply_from: agent.waiting_reply_from.clone(),
                 waiting_since: agent.waiting_since,
                 waiting_conversation_id: agent.waiting_conversation_id,
+                tool_calls: agent.tool_calls.iter().map(|tc| ToolCallDisplay {
+                    name: tc.name.clone(),
+                    running: tc.status == acp_core::agent::ToolCallStatus::Running,
+                }).collect(),
             });
             if agent.streaming && !agent.stream_buf.is_empty() {
                 self.messages
@@ -354,6 +379,10 @@ impl App {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 self.should_quit = true;
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('q')) => {
+                // Cancel/interrupt the selected agent
+                self.cancel_selected_agent().await;
             }
             (_, KeyCode::Tab) => {
                 self.input.tab();
@@ -428,6 +457,39 @@ impl App {
             }
         }
         self.messages.scroll_to_top();
+    }
+
+    async fn cancel_selected_agent(&self) {
+        let name = match self.selected_agent_name().await {
+            Some(n) => n,
+            None => {
+                // System tab: cancel all running agents
+                let clients = self.clients.lock().await;
+                let mut cancelled = Vec::new();
+                for (name, client) in clients.iter() {
+                    if let Ok(c) = client.try_lock() {
+                        if c.alive {
+                            c.cancel().await;
+                            cancelled.push(name.clone());
+                        }
+                    }
+                }
+                if !cancelled.is_empty() {
+                    let mut ch = self.channel.lock().await;
+                    ch.post("系统", &format!("已中断: {}", cancelled.join(", ")), true);
+                }
+                return;
+            }
+        };
+
+        let clients = self.clients.lock().await;
+        if let Some(client) = clients.get(&name) {
+            if let Ok(c) = client.try_lock() {
+                c.cancel().await;
+                let mut ch = self.channel.lock().await;
+                ch.post("系统", &format!("已中断 {name}"), true);
+            }
+        }
     }
 
     async fn handle_input(&mut self, text: String) {
@@ -508,7 +570,12 @@ impl App {
 
         for target in targets {
             let name = target.name.clone();
-            let content = target.content.clone();
+            // When message is from user, prepend context so agent knows to reply directly
+            let content = if from == "you" || from == "你" {
+                format!("[来自用户的消息，直接回复即可，不需要 @main]\n{}", target.content)
+            } else {
+                target.content.clone()
+            };
             let channel = self.channel.clone();
             let clients = self.clients.clone();
             let sp = self.socket_path.clone();
@@ -785,6 +852,7 @@ impl App {
                                                         .and_then(|v| v.as_str())
                                                         .unwrap_or("tool");
                                                     agent.activity = Some(title.to_string());
+                                                    agent.push_tool_call(title.to_string());
                                                 }
                                                 Some("tool_call_update") => {
                                                     if let Some(title) =
@@ -796,10 +864,12 @@ impl App {
                                                 Some("agent_thought_chunk") => {
                                                     agent.activity = Some("thinking".into());
                                                 }
-                                                Some(
-                                                    "agent_message_start" | "agent_message_end",
-                                                ) => {
+                                                Some("agent_message_start") => {
                                                     agent.activity = None;
+                                                }
+                                                Some("agent_message_end") => {
+                                                    agent.activity = None;
+                                                    agent.finish_tool_calls();
                                                 }
                                                 _ => {
                                                     // Don't change activity for unknown update types

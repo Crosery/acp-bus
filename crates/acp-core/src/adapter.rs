@@ -287,6 +287,10 @@ pub fn get_bus_system_prompt(agent_name: &str, channel_id: Option<&str>, is_main
 错误示例：@main 我先读取了文件，然后分析了结构，接着执行了命令...最终结果是 X。
 正确示例：@main 任务完成。结果：X。发现 Y 需要注意。
 
+## 用户直接对话
+
+如果收到的消息标记为「来自用户」，说明用户在直接跟你对话。此时直接回复即可，不要 @main，不要用 bus_send_message。你的回复会自动展示给用户。
+
 ## 团队通信
 
 - `bus_send_message` — 给其他 agent 发消息（如请求数据、协调接口、交接成果）

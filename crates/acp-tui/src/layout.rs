@@ -8,8 +8,14 @@ pub struct AppLayout {
 
 impl AppLayout {
     pub fn new(area: Rect) -> Self {
-        // Sidebar width: fixed 18 cols (enough for agent names + status)
-        let sidebar_width = if area.width > 60 { 18 } else { 14 };
+        // Sidebar width: wider for tool call tree display
+        let sidebar_width = if area.width > 100 {
+            24
+        } else if area.width > 60 {
+            20
+        } else {
+            16
+        };
 
         let h_chunks = Layout::default()
             .direction(Direction::Horizontal)

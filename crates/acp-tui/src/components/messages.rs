@@ -130,28 +130,15 @@ impl MessagesView {
         };
         self.total_rendered_lines = wrapped_lines;
 
-        // Auto-scroll to bottom when following new messages
+        // Auto-scroll: keep latest content visible (like Claude Code)
         if self.auto_scroll && self.total_rendered_lines > inner.height {
             self.scroll_offset = self.total_rendered_lines - inner.height;
         }
 
-        // Chat-style: anchor content to bottom when it doesn't fill the viewport
-        let render_area = if self.total_rendered_lines < inner.height {
-            let top_pad = inner.height - self.total_rendered_lines;
-            Rect {
-                x: inner.x,
-                y: inner.y + top_pad,
-                width: inner.width,
-                height: self.total_rendered_lines,
-            }
-        } else {
-            inner
-        };
-
         let paragraph = Paragraph::new(text)
             .wrap(Wrap { trim: false })
             .scroll((self.scroll_offset, 0));
-        paragraph.render(render_area, buf);
+        paragraph.render(inner, buf);
     }
 
     fn build_text(&self, _width: u16) -> Vec<Line<'static>> {
@@ -175,6 +162,10 @@ impl MessagesView {
                         }
                         // Messages directed TO this agent
                         if line.to.as_deref() == Some(agent.as_str()) {
+                            return true;
+                        }
+                        // Broadcast messages that @mention this agent
+                        if line.to.is_none() && line.content.contains(&format!("@{agent}")) {
                             return true;
                         }
                         false

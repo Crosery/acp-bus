@@ -67,6 +67,8 @@ pub struct AcpClient {
     terminal_mgr: Arc<TerminalManager>,
     child: Option<Child>,
     pub last_activity: LastActivity,
+    /// PID of the spawned child process (for force-kill)
+    pub child_pid: u32,
 }
 
 impl AcpClient {
@@ -92,15 +94,24 @@ impl AcpClient {
             "spawning agent"
         );
 
-        let mut child = Command::new(&adapter.cmd)
-            .args(&adapter.args)
+        let mut cmd = Command::new(&adapter.cmd);
+        cmd.args(&adapter.args)
             .envs(&env_vars)
             .current_dir(&cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+            .kill_on_drop(true);
+
+        // Put child in its own process group so we can kill the whole group
+        #[cfg(unix)]
+        {
+            #[allow(unused_imports)]
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+
+        let mut child = cmd.spawn()?;
 
         let pid = child.id().unwrap_or(0);
         info!(adapter = %adapter.name, pid, "agent spawned");
@@ -202,6 +213,7 @@ impl AcpClient {
             terminal_mgr,
             child: Some(child),
             last_activity,
+            child_pid: pid,
         };
 
         // === ACP Handshake ===
@@ -383,11 +395,22 @@ impl AcpClient {
         }
     }
 
-    /// Stop the agent process.
+    /// Stop the agent process gracefully.
     pub async fn stop(&mut self) {
         self.alive = false;
         self.stdin_tx = None; // drop sender → stdin writer exits → child gets EOF
         self.terminal_mgr.cleanup().await;
+    }
+
+    /// Force-kill the agent process immediately (SIGKILL).
+    pub fn force_kill(&self) {
+        if self.child_pid != 0 {
+            #[cfg(unix)]
+            unsafe {
+                // Kill process group to clean up all children
+                libc::kill(-(self.child_pid as i32), libc::SIGKILL);
+            }
+        }
     }
 
     /// Send a JSON-RPC request, wait for response.
