@@ -233,25 +233,16 @@ impl InputBox {
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        // Keep the old plain input style, but reserve a clean line so it stays visible.
-        buf.set_string(
-            area.x,
-            area.y,
-            " ".repeat(area.width as usize),
-            Style::default(),
-        );
-        if area.height > 1 {
-            buf.set_string(
-                area.x,
-                area.y + 1,
-                " ".repeat(area.width as usize),
-                Style::default(),
-            );
-        }
+        let block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(Color::Rgb(40, 50, 70)));
+        let inner = block.inner(area);
+        block.render(area, buf);
+
         let prompt = Span::styled("> ", Style::default().fg(Color::DarkGray));
         let text = Span::raw(self.text.as_str());
         let line = Line::from(vec![prompt, text]);
-        buf.set_line(area.x, area.y, &line, area.width);
+        buf.set_line(inner.x, inner.y, &line, inner.width);
     }
 
     /// Render the completion popup above the input area
@@ -305,10 +296,10 @@ impl InputBox {
     }
 
     pub fn cursor_position(&self, area: Rect) -> (u16, u16) {
-        // +2 for "> " prompt, use display width for CJK
+        // +2 for "> " prompt, +1 for top border, use display width for CJK
         let display_width = self.text[..self.cursor_pos].width() as u16;
         let x = area.x + 2 + display_width;
-        let y = area.y;
+        let y = area.y + 1; // below the top border
         (x, y)
     }
 }

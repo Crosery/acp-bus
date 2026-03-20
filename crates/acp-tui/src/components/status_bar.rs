@@ -1,4 +1,5 @@
 use ratatui::prelude::*;
+use ratatui::widgets::{Block, Borders};
 
 use crate::theme;
 
@@ -18,47 +19,33 @@ pub struct StatusBar {
     pub selected: usize,
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{t}…")
-    }
-}
-
 fn active_for_secs(agent: &AgentDisplay) -> Option<i64> {
     let start = agent.prompt_start_time?;
     let now = chrono::Utc::now().timestamp();
     Some((now - start).max(0))
 }
 
-fn activity_badge(agent: &AgentDisplay) -> Option<(&'static str, Style)> {
+fn status_label(agent: &AgentDisplay) -> (&'static str, Style) {
     if agent.status == "error" || agent.status == "disconnected" {
-        return Some(("ERR", theme::STATUS_ERROR_BADGE));
+        return ("ERR", theme::STATUS_ERROR_BADGE);
     }
     if agent.waiting_reply_from.is_some() {
-        let waiting_secs = agent
-            .waiting_since
-            .map(|ts| (chrono::Utc::now().timestamp() - ts).max(0))
-            .unwrap_or(0);
-        if waiting_secs >= 30 {
-            return Some(("STALL", theme::STATUS_ERROR_BADGE));
-        }
-        return Some(("WAIT", theme::STATUS_THINKING));
+        return ("WAIT", theme::STATUS_THINKING);
     }
-
     let activity = agent.activity.as_deref().unwrap_or("");
     if activity == "thinking" {
-        return Some(("THINK", theme::STATUS_THINKING));
-    }
-    if activity.contains("tool") || activity.contains('/') {
-        return Some(("TOOL", theme::STATUS_TOOL));
+        return ("…", Style::default().fg(Color::Yellow));
     }
     if agent.status == "streaming" || !activity.is_empty() {
-        return Some(("BUSY", theme::STATUS_BUSY));
+        return ("●", Style::default().fg(Color::Green));
     }
-    None
+    if agent.status == "connecting" {
+        return ("◌", Style::default().fg(Color::DarkGray));
+    }
+    if agent.status == "idle" {
+        return ("○", Style::default().fg(Color::DarkGray));
+    }
+    ("?", Style::default().fg(Color::DarkGray))
 }
 
 impl StatusBar {
@@ -79,111 +66,57 @@ impl StatusBar {
     }
 
     pub fn render(&self, agents: &[AgentDisplay], area: Rect, buf: &mut Buffer) {
-        if agents.is_empty() {
+        let block = Block::default()
+            .borders(Borders::RIGHT)
+            .border_style(Style::default().fg(Color::Rgb(40, 50, 70)));
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        if agents.is_empty() || inner.width < 4 {
             return;
         }
 
-        let mut spans = Vec::new();
-
         for (i, agent) in agents.iter().enumerate() {
+            if i as u16 >= inner.height {
+                break;
+            }
+            let y = inner.y + i as u16;
             let is_selected = i == self.selected;
-            let icon = theme::status_icon(&agent.status);
-            let status_style = match agent.status.as_str() {
-                "idle" => theme::STATUS_IDLE,
-                "streaming" => theme::STATUS_STREAMING,
-                "connecting" => theme::STATUS_CONNECTING,
-                _ => theme::STATUS_DISCONNECTED,
-            };
 
+            let (icon, icon_style) = status_label(agent);
+
+            let mut spans = vec![];
+
+            // Selection indicator
             if is_selected {
-                spans.push(Span::styled("【", Style::default().fg(Color::Cyan)));
-                spans.push(Span::styled(icon, status_style));
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    &agent.name,
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                if let Some(ref adapter) = agent.adapter {
-                    spans.push(Span::styled(
-                        format!(":{adapter}"),
-                        Style::default().fg(Color::DarkGray),
-                    ));
-                }
-                if let Some((label, style)) = activity_badge(agent) {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(format!(" {label} "), style));
-                }
-                if let Some(ref activity) = agent.activity {
-                    let short = truncate(activity, 10);
-                    spans.push(Span::styled(
-                        format!(" {short}"),
-                        Style::default().fg(Color::Yellow),
-                    ));
-                }
-                if let Some(ref waiting_on) = agent.waiting_reply_from {
-                    spans.push(Span::styled(
-                        format!(" ->await {waiting_on}"),
-                        Style::default().fg(Color::LightBlue),
-                    ));
-                }
-                if let Some(seconds) = active_for_secs(agent) {
-                    spans.push(Span::styled(
-                        format!(" {seconds}s"),
-                        Style::default().fg(Color::LightYellow),
-                    ));
-                }
-                if let Some(conv_id) = agent.waiting_conversation_id {
-                    spans.push(Span::styled(
-                        format!(" #{}", conv_id),
-                        Style::default().fg(Color::Gray),
-                    ));
-                }
-                if let Some(ref sid) = agent.session_id {
-                    let short = truncate(sid, 8);
-                    spans.push(Span::styled(
-                        format!(" [{short}]"),
-                        Style::default().fg(Color::Rgb(100, 100, 100)),
-                    ));
-                }
-                spans.push(Span::styled("】", Style::default().fg(Color::Cyan)));
+                spans.push(Span::styled("▸", Style::default().fg(Color::Cyan)));
             } else {
                 spans.push(Span::raw(" "));
-                spans.push(Span::styled(icon, status_style));
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    &agent.name,
-                    Style::default().fg(Color::DarkGray),
-                ));
-                if let Some((label, style)) = activity_badge(agent) {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(format!(" {label} "), style));
-                }
-                if let Some(ref activity) = agent.activity {
-                    let short = truncate(activity, 8);
-                    spans.push(Span::styled(
-                        format!(" {short}"),
-                        Style::default().fg(Color::Rgb(80, 80, 80)),
-                    ));
-                }
-                if let Some(ref waiting_on) = agent.waiting_reply_from {
-                    spans.push(Span::styled(
-                        format!(" ->{waiting_on}"),
-                        Style::default().fg(Color::LightBlue),
-                    ));
-                }
-                if let Some(seconds) = active_for_secs(agent) {
-                    spans.push(Span::styled(
-                        format!(" {seconds}s"),
-                        Style::default().fg(Color::LightYellow),
-                    ));
-                }
-                spans.push(Span::raw(" "));
             }
-        }
 
-        let line = Line::from(spans);
-        buf.set_line(area.x, area.y, &line, area.width);
+            // Status icon
+            spans.push(Span::styled(icon, icon_style));
+
+            // Agent name
+            let name_style = if is_selected {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Rgb(140, 150, 170))
+            };
+            let max_name = (inner.width as usize).saturating_sub(3);
+            let name: String = agent.name.chars().take(max_name).collect();
+            spans.push(Span::styled(name, name_style));
+
+            // Timer (if active, show on same line if space permits)
+            if let Some(secs) = active_for_secs(agent) {
+                let timer = format!(" {secs}s");
+                if spans.iter().map(|s| s.content.len()).sum::<usize>() + timer.len() <= inner.width as usize {
+                    spans.push(Span::styled(timer, Style::default().fg(Color::Yellow)));
+                }
+            }
+
+            let line = Line::from(spans);
+            buf.set_line(inner.x, y, &line, inner.width);
+        }
     }
 }

@@ -1,7 +1,8 @@
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 use regex::Regex;
 use std::sync::LazyLock;
+use unicode_width::UnicodeWidthStr;
 
 use acp_core::channel::{Message, MessageKind, MessageStatus};
 
@@ -101,25 +102,26 @@ impl MessagesView {
     }
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme::BORDER);
-
-        let inner = block.inner(area);
-        block.render(area, buf);
+        // No border — messages fill the area for maximum chat space
+        let inner = Rect {
+            x: area.x + 1,
+            y: area.y,
+            width: area.width.saturating_sub(2),
+            height: area.height,
+        };
 
         self.visible_height = inner.height;
         let text = self.build_text(inner.width);
 
-        // Calculate actual rendered lines accounting for word wrap
+        // Calculate actual rendered lines accounting for word wrap and CJK double-width
         let wrapped_lines: u16 = if inner.width > 0 {
             text.iter()
                 .map(|line| {
-                    let w: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+                    let w: usize = line.spans.iter().map(|s| s.content.width()).sum();
                     if w == 0 {
                         1u16
                     } else {
-                        ((w as u16).saturating_sub(1) / inner.width + 1).max(1)
+                        (w as u16).div_ceil(inner.width).max(1)
                     }
                 })
                 .sum()
@@ -133,10 +135,23 @@ impl MessagesView {
             self.scroll_offset = self.total_rendered_lines - inner.height;
         }
 
+        // Chat-style: anchor content to bottom when it doesn't fill the viewport
+        let render_area = if self.total_rendered_lines < inner.height {
+            let top_pad = inner.height - self.total_rendered_lines;
+            Rect {
+                x: inner.x,
+                y: inner.y + top_pad,
+                width: inner.width,
+                height: self.total_rendered_lines,
+            }
+        } else {
+            inner
+        };
+
         let paragraph = Paragraph::new(text)
             .wrap(Wrap { trim: false })
             .scroll((self.scroll_offset, 0));
-        paragraph.render(inner, buf);
+        paragraph.render(render_area, buf);
     }
 
     fn build_text(&self, _width: u16) -> Vec<Line<'static>> {
@@ -169,70 +184,61 @@ impl MessagesView {
             .collect();
 
         for (i, line) in filtered.iter().enumerate() {
-            // Separator between messages
+            // Blank line between messages (cleaner than heavy separators)
             if i > 0 {
-                text.push(Line::from(Span::styled(
-                    "─".repeat(40),
-                    Style::default().fg(Color::Rgb(60, 60, 60)),
-                )));
+                text.push(Line::from(""));
             }
 
-            // Header line: name + timestamp
+            // Header: name + direction + timestamp (compact single line)
             let name_style = if line.status == MessageStatus::Failed {
                 Style::default().fg(Color::LightRed)
-            } else if line.kind == MessageKind::Task {
-                Style::default().fg(Color::LightBlue)
             } else if line.from == "系统" {
                 theme::SYSTEM_MSG
             } else if line.from == "you" || line.from == "你" {
                 theme::USER_MSG
+            } else if line.kind == MessageKind::Task {
+                Style::default().fg(Color::LightCyan)
             } else {
                 theme::AGENT_MSG
             };
 
-            let mut header = vec![Span::styled(
-                match &line.to {
-                    Some(to) => format!("{} -> {}", line.from, to),
-                    None => line.from.clone(),
-                },
-                name_style.add_modifier(Modifier::BOLD),
-            )];
+            let mut header = vec![];
 
+            // Name with direction arrow
+            let name_text = match &line.to {
+                Some(to) => format!("{} → {}", line.from, to),
+                None => line.from.clone(),
+            };
+            header.push(Span::styled(name_text, name_style.add_modifier(Modifier::BOLD)));
+
+            // Timestamp (dimmer, right after name)
             if !line.timestamp.is_empty() {
-                header.push(Span::raw("  "));
                 let ts_text = if let Some(ref gap) = line.gap {
-                    format!("{} · {}", line.timestamp, gap)
+                    format!("  {} · {}", line.timestamp, gap)
                 } else {
-                    line.timestamp.clone()
+                    format!("  {}", line.timestamp)
                 };
                 header.push(Span::styled(ts_text, theme::TIMESTAMP));
             }
             text.push(Line::from(header));
 
-            // Content lines with @mention highlighting
+            // Content
             if line.kind == MessageKind::System || line.kind == MessageKind::Audit {
-                // System messages: dimmed, single line
                 text.push(Line::from(Span::styled(
                     line.content.clone(),
                     theme::SYSTEM_MSG,
                 )));
-                if let Some(error) = &line.error {
-                    text.push(Line::from(Span::styled(
-                        format!("error: {error}"),
-                        Style::default().fg(Color::Red),
-                    )));
-                }
             } else {
-                // User/Agent messages: highlight @mentions
                 for content_line in line.content.lines() {
                     text.push(Line::from(highlight_mentions(content_line)));
                 }
-                if let Some(error) = &line.error {
-                    text.push(Line::from(Span::styled(
-                        format!("error: {error}"),
-                        Style::default().fg(Color::Red),
-                    )));
-                }
+            }
+
+            if let Some(error) = &line.error {
+                text.push(Line::from(Span::styled(
+                    format!("✗ {error}"),
+                    Style::default().fg(Color::Red),
+                )));
             }
         }
 
@@ -249,15 +255,12 @@ impl MessagesView {
             }
 
             if !text.is_empty() {
-                text.push(Line::from(Span::styled(
-                    "─".repeat(40),
-                    Style::default().fg(Color::Rgb(60, 60, 60)),
-                )));
+                text.push(Line::from(""));
             }
 
             text.push(Line::from(vec![
                 Span::styled(name.clone(), theme::AGENT_MSG.add_modifier(Modifier::BOLD)),
-                Span::styled("  ▍streaming", Style::default().fg(Color::Yellow)),
+                Span::styled("  ▌", Style::default().fg(Color::Yellow)),
             ]));
             for content_line in buf.lines() {
                 text.push(Line::from(highlight_mentions(content_line)));

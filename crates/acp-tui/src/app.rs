@@ -332,12 +332,12 @@ impl App {
     fn draw(&mut self, frame: &mut Frame) {
         let layout = AppLayout::new(frame.area());
 
+        // Sidebar (agent list)
+        self.status_bar
+            .render(&self.cached_agents, layout.sidebar, frame.buffer_mut());
+
         // Messages (with streaming previews)
         self.messages.render(layout.messages, frame.buffer_mut());
-
-        // Status bar
-        self.status_bar
-            .render(&self.cached_agents, layout.status_bar, frame.buffer_mut());
 
         // Input
         self.input.render(layout.input, frame.buffer_mut());

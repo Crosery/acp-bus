@@ -1,26 +1,37 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 pub struct AppLayout {
+    pub sidebar: Rect,
     pub messages: Rect,
-    pub status_bar: Rect,
     pub input: Rect,
 }
 
 impl AppLayout {
     pub fn new(area: Rect) -> Self {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
+        // Sidebar width: fixed 18 cols (enough for agent names + status)
+        let sidebar_width = if area.width > 60 { 18 } else { 14 };
+
+        let h_chunks = Layout::default()
+            .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(1), // status bar
-                Constraint::Min(5),    // messages
-                Constraint::Length(1), // input
+                Constraint::Length(sidebar_width), // sidebar
+                Constraint::Min(30),               // chat area
             ])
             .split(area);
 
+        // Chat area: messages + input
+        let v_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(5),    // messages
+                Constraint::Length(3), // input (with border)
+            ])
+            .split(h_chunks[1]);
+
         Self {
-            status_bar: chunks[0],
-            messages: chunks[1],
-            input: chunks[2],
+            sidebar: h_chunks[0],
+            messages: v_chunks[0],
+            input: v_chunks[1],
         }
     }
 }
