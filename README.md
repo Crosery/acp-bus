@@ -75,8 +75,12 @@ TUI 内操作：
 /list                             # 查看所有 Agent
 /save                             # 保存会话快照
 /cancel w1                        # 取消 Agent 当前任务
+Ctrl+c                            # 退出（立即终止所有 Agent）
+Ctrl+q                            # 中断选中 Agent 的当前任务
 Ctrl+j/k                          # 上下滚动消息
+Ctrl+d/u                          # 快速翻页（10行）
 Ctrl+n/p                          # 切换 Agent 标签页
+鼠标滚轮                          # 滚动消息
 ```
 
 ## 架构
@@ -158,8 +162,10 @@ TUI 自动解析 → 创建 w1, w2 → 等待连接 → 派发任务（包含完
 | `claude` | claude-agent-acp | Claude Code (Anthropic) |
 | `c1` | claude-agent-acp | Claude Code API 线路 1 |
 | `c2` | claude-agent-acp | Claude Code API 线路 2 |
-| `gemini` | gemini --yolo --acp | Gemini CLI (Google) |
+| `gemini` | gemini --yolo --acp | Gemini CLI (Google)，启动较慢（~25s），API 429 时静默无响应 |
 | `codex` | codex-acp | Codex CLI (OpenAI) |
+
+连通性测试：`cargo test -p acp-core --test real_agent_connectivity -- --ignored`
 
 ## 开发
 
@@ -181,6 +187,12 @@ RUST_LOG=debug cargo run -- tui    # Debug 模式（日志输出到 stderr）
 - [x] 消息自动滚动（考虑 word wrap）
 - [x] Scheduler 串行化 Main Agent 消息（防止消息风暴）
 - [x] 原子写入、UTF-8 安全、进程管理修复
+- [x] 强制终止：Ctrl+C 立即 SIGKILL 所有 Agent 进程组，不再卡死
+- [x] 任务中断：Ctrl+Q 取消选中 Agent 的当前 prompt
+- [x] 自发消息防护：禁止 Agent 通过 bus 给自己发消息（防死循环）
+- [x] 用户直接对话：@worker 时 worker 直接回复，不再绕道 @main
+- [x] Sidebar 工具调用实时展示（工具名 + 计时器）
+- [x] 消息过滤：Agent tab 显示 @mention 该 Agent 的广播消息
 
 ### Phase 2：通信增强
 

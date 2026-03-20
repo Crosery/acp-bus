@@ -31,9 +31,23 @@ Rust workspace with 4 crates + binary. Dependency direction: `acp-protocol ← a
 
 - **Concurrency**: `Arc<Mutex<T>>` for shared state, `tokio::sync::broadcast` for channel event fan-out, `tokio::sync::mpsc` for client communication, `tokio::select!` for event multiplexing.
 - **Error handling**: `anyhow::Result` throughout; `acp_protocol::RpcError` at the JSON-RPC boundary.
-- **Process management**: Child processes spawned with `kill_on_drop`. AcpClient runs separate tokio tasks for stdin writer, stdout reader, stderr logger.
+- **Process management**: Child processes spawned in own process group (`process_group(0)`) with `kill_on_drop`. `force_kill()` sends `SIGKILL` to the entire process group. AcpClient runs separate tokio tasks for stdin writer, stdout reader, stderr logger.
 - **ACP handshake sequence**: `initialize` → `authenticate` (optional) → `session/new` → `session/prompt`. Agent sends `session/update` notifications for streaming content.
 - **Store paths**: `~/.local/share/acp-bus/channels/{encoded_cwd}/{channel_id}.json` where CWD is encoded (trim `/`, replace `/` with `-`).
+
+## TUI Keybindings
+
+- `Ctrl+C` — quit (force-kill all agents immediately)
+- `Ctrl+Q` — cancel selected agent's current prompt (all agents if on System tab)
+- `Ctrl+N/P` or `Shift+Arrow` — switch agent tabs
+- `Ctrl+J/K` — scroll messages
+- `Ctrl+D/U` — page scroll (10 lines)
+- Mouse scroll — scroll messages
+
+## Bus Safety
+
+- Agents cannot send messages to themselves via `bus_send_message` (self-send guard).
+- When user @mentions a worker directly, the prompt is prefixed with `[来自用户]` context so the worker replies directly instead of routing through `@main`.
 
 ## Testing Conventions
 
