@@ -984,20 +984,8 @@ async fn do_prompt_inner(
                     let mut ch = channel.lock().await;
                     ch.post(&name, &reply, true);
                 } else {
-                    // Has @mentions — post clean summary (strip /add and @mention lines)
-                    let clean: String = reply
-                        .lines()
-                        .filter(|l| {
-                            let t = l.trim();
-                            !t.starts_with('/') && !t.starts_with('@')
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let clean = clean.trim();
-                    if !clean.is_empty() {
-                        let mut ch = channel.lock().await;
-                        ch.post(&name, clean, true);
-                    }
+                    // Has @mentions — skip broadcast to avoid duplicate messages.
+                    // Only post directed messages to each target below.
 
                     // Wait for newly added agents
                     if !added_agents.is_empty() {
