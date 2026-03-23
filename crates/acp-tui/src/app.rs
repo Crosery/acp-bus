@@ -638,18 +638,19 @@ impl App {
                 self.start_agent(name.clone(), adapter_name).await;
 
                 if let Some(task) = task {
+                    // Post dispatch message immediately so it appears before
+                    // any bus messages that arrive while the agent connects.
+                    {
+                        let mut ch = self.channel.lock().await;
+                        ch.post_directed("main", &name, &task,
+                            MessageKind::Task, MessageTransport::MentionRoute, MessageStatus::Delivered);
+                    }
                     let ch = self.channel.clone();
                     let cl = self.clients.clone();
                     let sp = self.socket_path.clone();
                     let mc = self.mcp_command.clone();
                     let sc = self.scheduler.clone();
                     tokio::spawn(async move {
-                        wait_for_agents(&[name.clone()], &cl, 30).await;
-                        {
-                            let mut chan = ch.lock().await;
-                            chan.post_directed("main", &name, &task,
-                                MessageKind::Task, MessageTransport::MentionRoute, MessageStatus::Delivered);
-                        }
                         do_prompt(name, task, ch, cl, sp, mc, sc).await;
                     });
                 }
