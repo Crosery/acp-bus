@@ -34,12 +34,58 @@ pub enum BusEvent {
         from_agent: String,
         reply_tx: oneshot::Sender<Vec<AgentInfo>>,
     },
+    CreateAgent {
+        from_agent: String,
+        name: String,
+        adapter: String,
+        task: Option<String>,
+        reply_tx: oneshot::Sender<CreateAgentResult>,
+    },
+    RemoveAgent {
+        from_agent: String,
+        name: String,
+        reply_tx: oneshot::Sender<RemoveAgentResult>,
+    },
+    SendAndWait {
+        from_agent: String,
+        to_agent: String,
+        content: String,
+        timeout_secs: u64,
+        reply_tx: oneshot::Sender<SendAndWaitResult>,
+    },
+    Reply {
+        from_agent: String,
+        to_agent: String,
+        content: String,
+        in_reply_to: Option<u64>,
+        reply_tx: oneshot::Sender<BusSendResult>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct BusSendResult {
     pub message_id: Option<u64>,
     pub delivered: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateAgentResult {
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoveAgentResult {
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SendAndWaitResult {
+    pub ok: bool,
+    pub reply_content: Option<String>,
+    pub from_agent: Option<String>,
     pub error: Option<String>,
 }
 

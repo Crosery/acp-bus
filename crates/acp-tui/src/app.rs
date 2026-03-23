@@ -304,6 +304,8 @@ impl App {
                 };
                 let _ = reply_tx.send(agents);
             }
+            // Not yet implemented in TUI — will be handled in a future task
+            _ => {}
         }
     }
 

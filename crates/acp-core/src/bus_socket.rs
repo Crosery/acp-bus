@@ -111,6 +111,91 @@ async fn handle_line(line: &str, bus_tx: &mpsc::UnboundedSender<BusEvent>) -> St
                 _ => r#"{"error":"timeout"}"#.to_string(),
             }
         }
+        "create_agent" => {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let name = msg.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let adapter = msg.get("adapter").and_then(|v| v.as_str()).unwrap_or("claude");
+            let task = msg.get("task").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let _ = bus_tx.send(BusEvent::CreateAgent {
+                from_agent: from.to_string(),
+                name: name.to_string(),
+                adapter: adapter.to_string(),
+                task,
+                reply_tx,
+            });
+            match tokio::time::timeout(std::time::Duration::from_secs(5), reply_rx).await {
+                Ok(Ok(result)) => serde_json::json!({
+                    "ok": result.ok,
+                    "error": result.error,
+                }).to_string(),
+                _ => r#"{"error":"timeout"}"#.to_string(),
+            }
+        }
+        "remove_agent" => {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let name = msg.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let _ = bus_tx.send(BusEvent::RemoveAgent {
+                from_agent: from.to_string(),
+                name: name.to_string(),
+                reply_tx,
+            });
+            match tokio::time::timeout(std::time::Duration::from_secs(5), reply_rx).await {
+                Ok(Ok(result)) => serde_json::json!({
+                    "ok": result.ok,
+                    "error": result.error,
+                }).to_string(),
+                _ => r#"{"error":"timeout"}"#.to_string(),
+            }
+        }
+        "send_and_wait" => {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let to = msg.get("to").and_then(|v| v.as_str()).unwrap_or("");
+            let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let timeout_secs = msg.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(120);
+            let _ = bus_tx.send(BusEvent::SendAndWait {
+                from_agent: from.to_string(),
+                to_agent: to.to_string(),
+                content: content.to_string(),
+                timeout_secs,
+                reply_tx,
+            });
+            // send_and_wait may take a long time — use the requested timeout + buffer
+            let timeout = std::time::Duration::from_secs(timeout_secs + 10);
+            match tokio::time::timeout(timeout, reply_rx).await {
+                Ok(Ok(result)) => serde_json::json!({
+                    "ok": result.ok,
+                    "reply": result.reply_content,
+                    "from": result.from_agent,
+                    "error": result.error,
+                }).to_string(),
+                _ => r#"{"error":"timeout"}"#.to_string(),
+            }
+        }
+        "reply" => {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let to = msg.get("to").and_then(|v| v.as_str()).unwrap_or("");
+            let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let in_reply_to = msg.get("in_reply_to").and_then(|v| v.as_u64());
+            let _ = bus_tx.send(BusEvent::Reply {
+                from_agent: from.to_string(),
+                to_agent: to.to_string(),
+                content: content.to_string(),
+                in_reply_to,
+                reply_tx,
+            });
+            match tokio::time::timeout(std::time::Duration::from_secs(5), reply_rx).await {
+                Ok(Ok(result)) => serde_json::json!({
+                    "ok": result.delivered,
+                    "messageId": result.message_id,
+                    "error": result.error,
+                }).to_string(),
+                _ => r#"{"error":"timeout"}"#.to_string(),
+            }
+        }
         _ => r#"{"error":"unknown type"}"#.to_string(),
     }
 }
