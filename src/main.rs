@@ -58,6 +58,32 @@ async fn mcp_call_socket(
         "bus_list_agents" => {
             serde_json::json!({ "type": "list_agents", "from": agent_name })
         }
+        "bus_create_agent" => {
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let adapter = args.get("adapter").and_then(|v| v.as_str()).unwrap_or("claude");
+            let task = args.get("task").and_then(|v| v.as_str());
+            let mut req = serde_json::json!({ "type": "create_agent", "from": agent_name, "name": name, "adapter": adapter });
+            if let Some(task) = task { req["task"] = serde_json::json!(task); }
+            req
+        }
+        "bus_remove_agent" => {
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            serde_json::json!({ "type": "remove_agent", "from": agent_name, "name": name })
+        }
+        "bus_send_and_wait" => {
+            let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("");
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let timeout = args.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(120).min(300);
+            serde_json::json!({ "type": "send_and_wait", "from": agent_name, "to": to, "content": content, "timeout_secs": timeout })
+        }
+        "bus_reply" => {
+            let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("");
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let in_reply_to = args.get("in_reply_to").and_then(|v| v.as_u64());
+            let mut req = serde_json::json!({ "type": "reply", "from": agent_name, "to": to, "content": content });
+            if let Some(id) = in_reply_to { req["in_reply_to"] = serde_json::json!(id); }
+            req
+        }
         _ => return r#"{"error":"unknown tool"}"#.to_string(),
     };
 
@@ -174,9 +200,56 @@ async fn main() -> anyhow::Result<()> {
                             {
                                 "name": "bus_list_agents",
                                 "description": "List all agents in the acp-bus channel with their status",
+                                "inputSchema": { "type": "object", "properties": {} }
+                            },
+                            {
+                                "name": "bus_create_agent",
+                                "description": "Create a new agent and optionally assign a task. Only callable by the main agent.",
                                 "inputSchema": {
                                     "type": "object",
-                                    "properties": {}
+                                    "properties": {
+                                        "name": { "type": "string", "description": "Agent name" },
+                                        "adapter": { "type": "string", "description": "Adapter: claude, c1, c2, gemini, codex" },
+                                        "task": { "type": "string", "description": "Optional task to assign after agent connects" }
+                                    },
+                                    "required": ["name", "adapter"]
+                                }
+                            },
+                            {
+                                "name": "bus_remove_agent",
+                                "description": "Remove an agent. Only callable by the main agent.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": { "type": "string", "description": "Agent name to remove" }
+                                    },
+                                    "required": ["name"]
+                                }
+                            },
+                            {
+                                "name": "bus_send_and_wait",
+                                "description": "Send a message to another agent and wait for their reply (synchronous). Blocks until the target calls bus_reply or timeout.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "to": { "type": "string", "description": "Target agent name" },
+                                        "content": { "type": "string", "description": "Message content" },
+                                        "timeout_secs": { "type": "integer", "description": "Timeout in seconds (default 120, max 300)" }
+                                    },
+                                    "required": ["to", "content"]
+                                }
+                            },
+                            {
+                                "name": "bus_reply",
+                                "description": "Reply to a message from another agent. Use after receiving a send_and_wait message.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "to": { "type": "string", "description": "Agent to reply to" },
+                                        "content": { "type": "string", "description": "Reply content" },
+                                        "in_reply_to": { "type": "integer", "description": "Original message ID (optional)" }
+                                    },
+                                    "required": ["to", "content"]
                                 }
                             }
                         ]
