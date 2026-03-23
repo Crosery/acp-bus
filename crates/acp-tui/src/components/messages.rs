@@ -135,8 +135,12 @@ impl MessagesView {
         self.total_rendered_lines = wrapped_lines;
 
         // Auto-scroll: keep latest content visible (like Claude Code)
-        if self.auto_scroll && self.total_rendered_lines > inner.height {
-            self.scroll_offset = self.total_rendered_lines - inner.height;
+        if self.auto_scroll {
+            if self.total_rendered_lines > inner.height {
+                self.scroll_offset = self.total_rendered_lines - inner.height;
+            } else {
+                self.scroll_offset = 0;
+            }
         }
 
         let paragraph = Paragraph::new(text)
