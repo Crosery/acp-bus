@@ -9,7 +9,10 @@ use tokio::sync::{mpsc, Mutex};
 use acp_core::adapter::{self, AdapterOpts};
 use acp_core::agent::{Agent, AgentStatus};
 use acp_core::channel::{Channel, ChannelEvent, MessageKind, MessageStatus, MessageTransport};
-use acp_core::client::{AcpClient, BusEvent, BusSendResult, ClientEvent};
+use acp_core::client::{
+    AcpClient, BusEvent, BusSendResult, ClientEvent, CreateAgentResult, RemoveAgentResult,
+    SendAndWaitResult,
+};
 use acp_core::router;
 
 use crate::components::input::InputBox;
@@ -304,8 +307,105 @@ impl App {
                 };
                 let _ = reply_tx.send(agents);
             }
-            // Not yet implemented in TUI — will be handled in a future task
-            _ => {}
+            BusEvent::CreateAgent {
+                from_agent,
+                name,
+                adapter,
+                task,
+                reply_tx,
+            } => {
+                let result = if from_agent != "main" {
+                    CreateAgentResult {
+                        ok: false,
+                        error: Some("only main agent can create agents".into()),
+                    }
+                } else {
+                    // Post task dispatch message immediately if task provided
+                    if let Some(ref task_content) = task {
+                        let mut ch = self.channel.lock().await;
+                        ch.post_directed(
+                            "main",
+                            &name,
+                            task_content,
+                            MessageKind::Task,
+                            MessageTransport::Internal,
+                            MessageStatus::Delivered,
+                        );
+                    }
+                    // Spawn agent in background
+                    let channel = self.channel.clone();
+                    let clients = self.clients.clone();
+                    let bus_tx = Some(self.bus_tx.clone());
+                    let sp = self.socket_path.clone();
+                    let mc = self.mcp_command.clone();
+                    let sc = self.scheduler.clone();
+                    let task_clone = task.clone();
+                    let name_clone = name.clone();
+                    tokio::spawn(async move {
+                        start_agent_bg(
+                            name_clone.clone(),
+                            adapter,
+                            channel.clone(),
+                            clients.clone(),
+                            bus_tx,
+                            sp.clone(),
+                            mc.clone(),
+                            sc.clone(),
+                        )
+                        .await;
+                        // If task was provided, dispatch it after agent connects
+                        if let Some(task_content) = task_clone {
+                            do_prompt(name_clone, task_content, channel, clients, sp, mc, sc).await;
+                        }
+                    });
+                    CreateAgentResult { ok: true, error: None }
+                };
+                let _ = reply_tx.send(result);
+            }
+            BusEvent::RemoveAgent {
+                from_agent,
+                name,
+                reply_tx,
+            } => {
+                let result = if from_agent != "main" {
+                    RemoveAgentResult {
+                        ok: false,
+                        error: Some("only main agent can remove agents".into()),
+                    }
+                } else if name == "main" {
+                    RemoveAgentResult {
+                        ok: false,
+                        error: Some("cannot remove main agent".into()),
+                    }
+                } else {
+                    {
+                        let mut map = self.clients.lock().await;
+                        if let Some(client) = map.remove(&name) {
+                            let mut c = client.lock().await;
+                            c.stop().await;
+                        }
+                    }
+                    let mut ch = self.channel.lock().await;
+                    ch.remove_agent(&name);
+                    RemoveAgentResult { ok: true, error: None }
+                };
+                let _ = reply_tx.send(result);
+            }
+            BusEvent::SendAndWait { reply_tx, .. } => {
+                let _ = reply_tx.send(SendAndWaitResult {
+                    ok: false,
+                    reply_content: None,
+                    from_agent: None,
+                    error: Some("not yet implemented".into()),
+                });
+            }
+            BusEvent::Reply { reply_tx, .. } => {
+                let _ = reply_tx.send(BusSendResult {
+                    message_id: None,
+                    delivered: false,
+                    error: Some("not yet implemented".into()),
+                });
+            }
         }
     }
 
