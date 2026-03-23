@@ -221,10 +221,10 @@ impl TerminalManager {
     pub async fn handle_kill(&self, tid: &str) -> anyhow::Result<serde_json::Value> {
         let map = self.terminals.lock().await;
         if let Some(t) = map.get(tid) {
-            if t.pid != 0 && !t.exited {
+            if !t.exited {
                 #[cfg(unix)]
-                unsafe {
-                    libc::kill(t.pid as i32, libc::SIGTERM);
+                if let Err(e) = crate::process::kill_process(t.pid, libc::SIGTERM) {
+                    tracing::debug!(pid = t.pid, error = %e, "terminal kill failed");
                 }
             }
         }
@@ -234,10 +234,10 @@ impl TerminalManager {
     pub async fn handle_release(&self, tid: &str) -> anyhow::Result<serde_json::Value> {
         let mut map = self.terminals.lock().await;
         if let Some(t) = map.remove(tid) {
-            if t.pid != 0 && !t.exited {
+            if !t.exited {
                 #[cfg(unix)]
-                unsafe {
-                    libc::kill(t.pid as i32, libc::SIGTERM);
+                if let Err(e) = crate::process::kill_process(t.pid, libc::SIGTERM) {
+                    tracing::debug!(pid = t.pid, error = %e, "terminal release kill failed");
                 }
             }
         }
@@ -247,10 +247,10 @@ impl TerminalManager {
     pub async fn cleanup(&self) {
         let mut map = self.terminals.lock().await;
         for (_, t) in map.drain() {
-            if t.pid != 0 && !t.exited {
+            if !t.exited {
                 #[cfg(unix)]
-                unsafe {
-                    libc::kill(t.pid as i32, libc::SIGTERM);
+                if let Err(e) = crate::process::kill_process(t.pid, libc::SIGTERM) {
+                    tracing::debug!(pid = t.pid, error = %e, "terminal cleanup kill failed");
                 }
             }
         }

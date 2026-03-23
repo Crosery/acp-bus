@@ -4,6 +4,7 @@ pub mod bus_socket;
 pub mod channel;
 pub mod client;
 pub mod comm_log;
+pub mod process;
 pub mod registry;
 pub mod router;
 pub mod scheduler;

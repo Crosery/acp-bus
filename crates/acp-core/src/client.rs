@@ -408,12 +408,9 @@ impl AcpClient {
 
     /// Force-kill the agent process immediately (SIGKILL).
     pub fn force_kill(&self) {
-        if self.child_pid != 0 {
-            #[cfg(unix)]
-            unsafe {
-                // Kill process group to clean up all children
-                libc::kill(-(self.child_pid as i32), libc::SIGKILL);
-            }
+        #[cfg(unix)]
+        if let Err(e) = crate::process::kill_process_group(self.child_pid, libc::SIGKILL) {
+            tracing::warn!(pid = self.child_pid, error = %e, "force_kill failed");
         }
     }
 
