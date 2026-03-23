@@ -96,6 +96,9 @@ pub struct AgentInfo {
     pub adapter: String,
     pub activity: Option<String>,
     pub active_secs: Option<i64>,
+    pub current_task: Option<String>,
+    pub inbox_depth: usize,
+    pub waiting_for: Option<String>,
 }
 
 /// Shared activity tracker — updated on every session/update event
@@ -806,6 +809,9 @@ async fn handle_reverse_request(
                                 "adapter": a.adapter,
                                 "activity": a.activity,
                                 "activeSecs": a.active_secs,
+                                "currentTask": a.current_task,
+                                "inboxDepth": a.inbox_depth,
+                                "waitingFor": a.waiting_for,
                             })
                         }).collect();
                         encode_response(id, serde_json::json!({"agents": list}))

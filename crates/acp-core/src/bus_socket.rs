@@ -104,7 +104,16 @@ async fn handle_line(line: &str, bus_tx: &mpsc::UnboundedSender<BusEvent>) -> St
                 Ok(Ok(agents)) => {
                     let list: Vec<serde_json::Value> = agents
                         .iter()
-                        .map(|a| serde_json::json!({"name": a.name, "status": a.status, "adapter": a.adapter}))
+                        .map(|a| serde_json::json!({
+                            "name": a.name,
+                            "status": a.status,
+                            "adapter": a.adapter,
+                            "activity": a.activity,
+                            "activeSecs": a.active_secs,
+                            "currentTask": a.current_task,
+                            "inboxDepth": a.inbox_depth,
+                            "waitingFor": a.waiting_for,
+                        }))
                         .collect();
                     serde_json::json!({"agents": list}).to_string()
                 }

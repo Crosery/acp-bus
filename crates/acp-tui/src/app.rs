@@ -289,8 +289,10 @@ impl App {
                     let sp = self.socket_path.clone();
                     let mc = self.mcp_command.clone();
                     let sc = self.scheduler.clone();
+                    let pw = self.pending_waits.clone();
+                    let wg = self.wait_graph.clone();
                     let sender = from_agent.clone();
-                    tokio::spawn(do_prompt_with_reply(to_agent, content, channel, clients, sp, mc, sc, sender));
+                    tokio::spawn(do_prompt_with_reply(to_agent, content, channel, clients, sp, mc, sc, sender, pw, wg));
                 }
                 let _ = reply_tx.send(result);
             }
@@ -306,6 +308,9 @@ impl App {
                             adapter: agent.adapter_name.clone(),
                             activity: agent.activity.clone(),
                             active_secs: agent.prompt_start_time.map(|t| (now - t).max(0)),
+                            current_task: agent.current_task.clone(),
+                            inbox_depth: 0, // Will be populated when inbox is implemented
+                            waiting_for: agent.waiting_reply_from.clone(),
                         })
                         .collect()
                 };
@@ -343,9 +348,13 @@ impl App {
                     let sp = self.socket_path.clone();
                     let mc = self.mcp_command.clone();
                     let sc = self.scheduler.clone();
+                    let pw = self.pending_waits.clone();
+                    let wg = self.wait_graph.clone();
                     let task_clone = task.clone();
                     let name_clone = name.clone();
                     tokio::spawn(async move {
+                        let pw2 = pw.clone();
+                        let wg2 = wg.clone();
                         start_agent_bg(
                             name_clone.clone(),
                             adapter,
@@ -355,11 +364,13 @@ impl App {
                             sp.clone(),
                             mc.clone(),
                             sc.clone(),
+                            pw,
+                            wg,
                         )
                         .await;
                         // If task was provided, dispatch it after agent connects
                         if let Some(task_content) = task_clone {
-                            do_prompt(name_clone, task_content, channel, clients, sp, mc, sc).await;
+                            do_prompt(name_clone, task_content, channel, clients, sp, mc, sc, pw2, wg2).await;
                         }
                     });
                     CreateAgentResult { ok: true, error: None }
@@ -462,11 +473,13 @@ impl App {
                 let sp = self.socket_path.clone();
                 let mc = self.mcp_command.clone();
                 let sc = self.scheduler.clone();
+                let pw2 = self.pending_waits.clone();
+                let wg2 = self.wait_graph.clone();
                 let to = to_agent.clone();
                 let from = from_agent.clone();
                 let prompt = format!("[来自 {from_agent} 的消息（等待回复）]\n{content}");
                 tokio::spawn(do_prompt_with_reply(
-                    to, prompt, channel, clients, sp, mc, sc, from.clone(),
+                    to, prompt, channel, clients, sp, mc, sc, from.clone(), pw2, wg2,
                 ));
 
                 // 6. Timeout cleanup (independent task)
@@ -825,9 +838,11 @@ impl App {
             let sp = self.socket_path.clone();
             let mc = self.mcp_command.clone();
             let sc = self.scheduler.clone();
+            let pw = self.pending_waits.clone();
+            let wg = self.wait_graph.clone();
 
             tokio::spawn(async move {
-                do_prompt(name.clone(), content.clone(), channel, clients, sp, mc, sc).await;
+                do_prompt(name.clone(), content.clone(), channel, clients, sp, mc, sc, pw, wg).await;
             });
         }
     }
@@ -840,9 +855,11 @@ impl App {
         let sp = self.socket_path.clone();
         let mc = self.mcp_command.clone();
         let sc = self.scheduler.clone();
+        let pw = self.pending_waits.clone();
+        let wg = self.wait_graph.clone();
 
         tokio::spawn(async move {
-            do_prompt(name.clone(), content.clone(), channel, clients, sp, mc, sc).await;
+            do_prompt(name.clone(), content.clone(), channel, clients, sp, mc, sc, pw, wg).await;
         });
     }
 
@@ -883,8 +900,10 @@ impl App {
                     let sp = self.socket_path.clone();
                     let mc = self.mcp_command.clone();
                     let sc = self.scheduler.clone();
+                    let pw = self.pending_waits.clone();
+                    let wg = self.wait_graph.clone();
                     tokio::spawn(async move {
-                        do_prompt(name, task, ch, cl, sp, mc, sc).await;
+                        do_prompt(name, task, ch, cl, sp, mc, sc, pw, wg).await;
                     });
                 }
             }
@@ -1001,6 +1020,8 @@ impl App {
         let socket_path = self.socket_path.clone();
         let mcp_command = self.mcp_command.clone();
         let scheduler = self.scheduler.clone();
+        let pending_waits = self.pending_waits.clone();
+        let wait_graph = self.wait_graph.clone();
 
         tokio::spawn(async move {
             let opts = AdapterOpts {
@@ -1078,14 +1099,18 @@ impl App {
                         let sp2 = socket_path.clone();
                         let mc2 = mcp_command.clone();
                         let sc2 = scheduler.clone();
+                        let pw2 = pending_waits.clone();
+                        let wg2 = wait_graph.clone();
                         let n = name.clone();
-                        tokio::spawn(do_prompt(n, task, ch, cl, sp2, mc2, sc2));
+                        tokio::spawn(do_prompt(n, task, ch, cl, sp2, mc2, sc2, pw2, wg2));
                     }
 
                     // Event listener for this agent
                     let channel2 = channel.clone();
                     let clients2 = clients.clone();
                     let name2 = name.clone();
+                    let pending_waits2 = pending_waits.clone();
+                    let wait_graph2 = wait_graph.clone();
                     tokio::spawn(async move {
                         while let Some(evt) = event_rx.recv().await {
                             match evt {
@@ -1145,6 +1170,22 @@ impl App {
                                         let mut map = clients2.lock().await;
                                         map.remove(&name2);
                                     }
+                                    // Clean up pending waits targeting this agent
+                                    {
+                                        let mut pw = pending_waits2.lock().await;
+                                        if let Some(tx) = pw.remove(&name2) {
+                                            let _ = tx.send(SendAndWaitResult {
+                                                ok: false,
+                                                reply_content: None,
+                                                from_agent: None,
+                                                error: Some(format!("agent {} exited", name2)),
+                                            });
+                                        }
+                                    }
+                                    {
+                                        let mut wg = wait_graph2.lock().await;
+                                        wg.cleanup_agent(&name2);
+                                    }
                                     let mut ch = channel2.lock().await;
                                     let abnormal = code != Some(0);
                                     if let Some(agent) = ch.agents.get_mut(&name2) {
@@ -1201,8 +1242,10 @@ fn do_prompt(
     socket_path: Option<String>,
     mcp_command: Option<String>,
     scheduler: SharedScheduler,
+    pending_waits: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<SendAndWaitResult>>>>,
+    wait_graph: Arc<Mutex<acp_core::wait_graph::WaitGraph>>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
-    Box::pin(do_prompt_inner(name, content, channel, clients, socket_path, mcp_command, scheduler, None))
+    Box::pin(do_prompt_inner(name, content, channel, clients, socket_path, mcp_command, scheduler, None, pending_waits, wait_graph))
 }
 
 fn do_prompt_with_reply(
@@ -1214,8 +1257,10 @@ fn do_prompt_with_reply(
     mcp_command: Option<String>,
     scheduler: SharedScheduler,
     reply_to: String,
+    pending_waits: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<SendAndWaitResult>>>>,
+    wait_graph: Arc<Mutex<acp_core::wait_graph::WaitGraph>>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
-    Box::pin(do_prompt_inner(name, content, channel, clients, socket_path, mcp_command, scheduler, Some(reply_to)))
+    Box::pin(do_prompt_inner(name, content, channel, clients, socket_path, mcp_command, scheduler, Some(reply_to), pending_waits, wait_graph))
 }
 
 async fn do_prompt_inner(
@@ -1227,6 +1272,8 @@ async fn do_prompt_inner(
     mcp_command: Option<String>,
     scheduler: SharedScheduler,
     reply_to: Option<String>,
+    pending_waits: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<SendAndWaitResult>>>>,
+    wait_graph: Arc<Mutex<acp_core::wait_graph::WaitGraph>>,
 ) {
     // Scheduler gate: serialize prompts to main agent
     if name == "main" {
@@ -1254,6 +1301,7 @@ async fn do_prompt_inner(
             agent.streaming = true;
             agent.stream_buf.clear();
             agent.activity = Some("receiving".into());
+            agent.current_task = Some(content.chars().take(100).collect());
             // First prompt: inject identity reminder so agent knows who it is
             let text = if !agent.prompted {
                 format!(
@@ -1323,6 +1371,7 @@ async fn do_prompt_inner(
             agent.status = AgentStatus::Idle;
             agent.activity = None;
             agent.prompt_start_time = None;
+            agent.current_task = None;
             std::mem::take(&mut agent.stream_buf)
         } else {
             return;
@@ -1335,7 +1384,7 @@ async fn do_prompt_inner(
         Ok(_) => {
             if !reply.is_empty() {
                 // Parse and execute /add commands from agent output
-                let added_agents = execute_agent_commands(&reply, &channel, &clients, None, socket_path.clone(), mcp_command.clone(), scheduler.clone()).await;
+                let added_agents = execute_agent_commands(&reply, &channel, &clients, None, socket_path.clone(), mcp_command.clone(), scheduler.clone(), pending_waits.clone(), wait_graph.clone()).await;
 
                 // Check if reply has @mentions that need routing
                 let known_agents = {
@@ -1373,9 +1422,11 @@ async fn do_prompt_inner(
                         let sp = socket_path.clone();
                         let mc = mcp_command.clone();
                         let sc = scheduler.clone();
+                        let pw = pending_waits.clone();
+                        let wg = wait_graph.clone();
                         let sender = sender.clone();
                         let reply_content = format!("[来自 {name} 的回复]\n{reply}");
-                        tokio::spawn(do_prompt(sender, reply_content, ch, cl, sp, mc, sc));
+                        tokio::spawn(do_prompt(sender, reply_content, ch, cl, sp, mc, sc, pw, wg));
                     } else {
                         // No routing, no reply_to — post full reply as broadcast
                         let mut ch = channel.lock().await;
@@ -1450,7 +1501,9 @@ async fn do_prompt_inner(
                         let sp = socket_path.clone();
                         let mc = mcp_command.clone();
                         let sc = scheduler.clone();
-                        tokio::spawn(do_prompt(tname, tcontent, ch, cl, sp, mc, sc));
+                        let pw = pending_waits.clone();
+                        let wg = wait_graph.clone();
+                        tokio::spawn(do_prompt(tname, tcontent, ch, cl, sp, mc, sc, pw, wg));
                     }
                 }
             } else {
@@ -1484,10 +1537,12 @@ async fn do_prompt_inner(
             let sp = socket_path.clone();
             let mc = mcp_command.clone();
             let sc = scheduler.clone();
+            let pw = pending_waits.clone();
+            let wg = wait_graph.clone();
             if let Some(reply_to) = queued.reply_to {
-                tokio::spawn(do_prompt_with_reply("main".to_string(), queued.content, ch, cl, sp, mc, sc, reply_to));
+                tokio::spawn(do_prompt_with_reply("main".to_string(), queued.content, ch, cl, sp, mc, sc, reply_to, pw, wg));
             } else {
-                tokio::spawn(do_prompt("main".to_string(), queued.content, ch, cl, sp, mc, sc));
+                tokio::spawn(do_prompt("main".to_string(), queued.content, ch, cl, sp, mc, sc, pw, wg));
             }
         }
     }
@@ -1503,6 +1558,8 @@ async fn execute_agent_commands(
     socket_path: Option<String>,
     mcp_command: Option<String>,
     scheduler: SharedScheduler,
+    pending_waits: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<SendAndWaitResult>>>>,
+    wait_graph: Arc<Mutex<acp_core::wait_graph::WaitGraph>>,
 ) -> Vec<String> {
     // Pre-parse: group multi-line /add commands (continuation lines don't start with / or @)
     let mut commands: Vec<String> = Vec::new();
@@ -1562,6 +1619,8 @@ async fn execute_agent_commands(
                         socket_path.clone(),
                         mcp_command.clone(),
                         scheduler.clone(),
+                        pending_waits.clone(),
+                        wait_graph.clone(),
                     )
                     .await;
                     added.push(agent_name.clone());
@@ -1572,6 +1631,8 @@ async fn execute_agent_commands(
                         let sp = socket_path.clone();
                         let mc = mcp_command.clone();
                         let sc = scheduler.clone();
+                        let pw = pending_waits.clone();
+                        let wg = wait_graph.clone();
                         tokio::spawn(async move {
                             wait_for_agents(&[agent_name.clone()], &cl, 30).await;
                             {
@@ -1579,7 +1640,7 @@ async fn execute_agent_commands(
                                 chan.post_directed("main", &agent_name, &task,
                                     MessageKind::Task, MessageTransport::MentionRoute, MessageStatus::Delivered);
                             }
-                            do_prompt(agent_name, task, ch, cl, sp, mc, sc).await;
+                            do_prompt(agent_name, task, ch, cl, sp, mc, sc, pw, wg).await;
                         });
                     }
                 }
@@ -1632,6 +1693,8 @@ async fn start_agent_bg(
     socket_path: Option<String>,
     mcp_command: Option<String>,
     scheduler: SharedScheduler,
+    pending_waits: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<SendAndWaitResult>>>>,
+    wait_graph: Arc<Mutex<acp_core::wait_graph::WaitGraph>>,
 ) {
     let cwd = {
         let ch = channel.lock().await;
@@ -1701,13 +1764,17 @@ async fn start_agent_bg(
                     let sp2 = socket_path.clone();
                     let mc2 = mcp_command.clone();
                     let sc2 = scheduler.clone();
+                    let pw2 = pending_waits.clone();
+                    let wg2 = wait_graph.clone();
                     let n = name.clone();
-                    tokio::spawn(do_prompt(n, task, ch, cl, sp2, mc2, sc2));
+                    tokio::spawn(do_prompt(n, task, ch, cl, sp2, mc2, sc2, pw2, wg2));
                 }
 
                 let channel2 = channel.clone();
                 let clients2 = clients.clone();
                 let name2 = name.clone();
+                let pending_waits2 = pending_waits.clone();
+                let wait_graph2 = wait_graph.clone();
                 tokio::spawn(async move {
                     while let Some(evt) = event_rx.recv().await {
                         match evt {
@@ -1757,6 +1824,22 @@ async fn start_agent_bg(
                                 {
                                     let mut map = clients2.lock().await;
                                     map.remove(&name2);
+                                }
+                                // Clean up pending waits targeting this agent
+                                {
+                                    let mut pw = pending_waits2.lock().await;
+                                    if let Some(tx) = pw.remove(&name2) {
+                                        let _ = tx.send(SendAndWaitResult {
+                                            ok: false,
+                                            reply_content: None,
+                                            from_agent: None,
+                                            error: Some(format!("agent {} exited", name2)),
+                                        });
+                                    }
+                                }
+                                {
+                                    let mut wg = wait_graph2.lock().await;
+                                    wg.cleanup_agent(&name2);
                                 }
                                 let mut ch = channel2.lock().await;
                                 let abnormal = code != Some(0);
