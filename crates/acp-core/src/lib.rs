@@ -10,3 +10,4 @@ pub mod router;
 pub mod scheduler;
 pub mod store;
 pub mod terminal;
+pub mod wait_graph;
