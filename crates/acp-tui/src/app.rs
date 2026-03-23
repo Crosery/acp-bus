@@ -463,7 +463,7 @@ impl App {
                 let ctx = self.ctx.clone();
                 let to = to_agent.clone();
                 let from = from_agent.clone();
-                let prompt = format!("[来自 {from_agent} 的消息（等待回复）]\n{content}");
+                let prompt = format!("[{from_agent} 等待你的回复，用 bus_reply(\"{from_agent}\", content) 回复后立即停止]\n{content}");
                 tokio::spawn(do_prompt_with_reply(
                     to, prompt, ctx, from.clone(),
                 ));
@@ -1354,16 +1354,42 @@ async fn do_prompt_inner(
                                 ));
                             }
                         }
-                        // Prompt the sender with the reply
-                        let ctx2 = ctx.clone();
-                        let sender = sender.clone();
-                        let reply_content = format!("[来自 {name} 的回复]\n{reply}");
-                        tokio::spawn(do_prompt(sender, reply_content, ctx2));
-                    } else {
+                        // Check if sender has a pending send_and_wait — fulfill it
+                        // instead of spawning a new prompt (which can't be processed
+                        // while the sender is blocked on the wait).
+                        let fulfilled = {
+                            let mut pw = ctx.pending_waits.lock().await;
+                            if let Some(tx) = pw.remove(sender) {
+                                let _ = tx.send(SendAndWaitResult {
+                                    ok: true,
+                                    reply_content: Some(reply.clone()),
+                                    from_agent: Some(name.clone()),
+                                    error: None,
+                                });
+                                true
+                            } else {
+                                false
+                            }
+                        };
+                        if fulfilled {
+                            let mut wg = ctx.wait_graph.lock().await;
+                            wg.remove_wait(sender);
+                        } else {
+                            // No pending wait — prompt the sender with the reply
+                            let ctx2 = ctx.clone();
+                            let sender = sender.clone();
+                            let reply_content =
+                                format!("[来自 {name} 的回复]\n{reply}");
+                            tokio::spawn(do_prompt(sender, reply_content, ctx2));
+                        }
+                    } else if reply_to.is_none() {
                         // No routing, no reply_to — post full reply as broadcast
                         let mut ch = ctx.channel.lock().await;
                         ch.post(&name, &reply, true);
                     }
+                    // If reply_to is Some but no @mentions: this agent was replying
+                    // to a send_and_wait. Any remaining text after bus_reply is
+                    // just confirmation noise — suppress it.
                 } else {
                     // Has @mentions — skip broadcast to avoid duplicate messages.
                     // Only post directed messages to each target below.

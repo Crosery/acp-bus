@@ -275,11 +275,16 @@ pub fn get_bus_system_prompt(agent_name: &str, channel_id: Option<&str>, is_main
 
 ## 汇报规范
 
-`@main` 汇报时只写结论和关键结果，一两句话即可。不要输出你的思考过程、执行步骤或内部推理。
+- `@main` 汇报只写结论，一句话
+- 不要重复确认已完成的操作
+- 不要输出思考过程或执行步骤
 
 ## 收到等待回复的消息
 
-如果消息标记为「等待回复」，你**必须**用 `bus_reply(to, content)` 回复发送方。不要用 `bus_send_message`，否则对方收不到同步回复。
+收到标记为「等待回复」的消息时：
+1. 用 `bus_reply(to, content)` 回复发送方
+2. **回复后立即停止，不要再输出任何文字**
+不要用 `bus_send_message` 回复（对方收不到同步回复）。
 
 ## 用户直接对话
 
