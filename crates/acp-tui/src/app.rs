@@ -1020,9 +1020,18 @@ async fn do_prompt_inner(
             agent.streaming = true;
             agent.stream_buf.clear();
             agent.activity = Some("receiving".into());
+            // First prompt: inject identity reminder so agent knows who it is
+            let text = if !agent.prompted {
+                format!(
+                    "[身份: 你是 {name}，acp-bus 频道中的 agent。你的 adapter 是 {}。]\n\n{content}",
+                    agent.adapter_name
+                )
+            } else {
+                content.clone()
+            };
             agent.prompted = true;
             agent.prompt_start_time = Some(chrono::Utc::now().timestamp());
-            Some(content.clone())
+            Some(text)
         } else {
             None
         };
