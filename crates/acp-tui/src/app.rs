@@ -982,7 +982,7 @@ async fn do_prompt_inner(
     if name == "main" {
         let should_send = {
             let mut sched = scheduler.lock().await;
-            match sched.push_to_main(content.clone(), None) {
+            match sched.push_to_main_with_reply(content.clone(), None, reply_to.clone()) {
                 Ok(immediate) => immediate,
                 Err(msg) => {
                     let mut ch = channel.lock().await;
@@ -1224,7 +1224,11 @@ async fn do_prompt_inner(
             let sp = socket_path.clone();
             let mc = mcp_command.clone();
             let sc = scheduler.clone();
-            tokio::spawn(do_prompt("main".to_string(), queued.content, ch, cl, sp, mc, sc));
+            if let Some(reply_to) = queued.reply_to {
+                tokio::spawn(do_prompt_with_reply("main".to_string(), queued.content, ch, cl, sp, mc, sc, reply_to));
+            } else {
+                tokio::spawn(do_prompt("main".to_string(), queued.content, ch, cl, sp, mc, sc));
+            }
         }
     }
 }

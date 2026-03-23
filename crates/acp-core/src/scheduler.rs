@@ -7,6 +7,7 @@ const MAX_MAIN_QUEUE: usize = 10;
 pub struct QueuedMessage {
     pub content: String,
     pub from: Option<String>,
+    pub reply_to: Option<String>,
 }
 
 /// Scheduler manages the main agent queue (serial) and agent dispatch.
@@ -30,13 +31,24 @@ impl Scheduler {
     /// Returns false if it was queued.
     /// Returns Err if the queue is full.
     pub fn push_to_main(&mut self, content: String, from: Option<String>) -> Result<bool, String> {
+        self.push_to_main_with_reply(content, from, None)
+    }
+
+    /// Push a message to the main queue, preserving reply_to context for bus replies.
+    pub fn push_to_main_with_reply(
+        &mut self,
+        content: String,
+        from: Option<String>,
+        reply_to: Option<String>,
+    ) -> Result<bool, String> {
         if self.main_busy {
             if self.main_queue.len() >= MAX_MAIN_QUEUE {
                 warn!("main queue full, dropping message");
                 return Err(format!("main 队列已满（{MAX_MAIN_QUEUE}），消息被丢弃"));
             }
             info!(msg_len = content.len(), "queuing message for main");
-            self.main_queue.push_back(QueuedMessage { content, from });
+            self.main_queue
+                .push_back(QueuedMessage { content, from, reply_to });
             return Ok(false);
         }
         self.main_busy = true;
@@ -93,5 +105,34 @@ mod tests {
             s.push_to_main(format!("msg {i}"), None).unwrap();
         }
         assert!(s.push_to_main("overflow".into(), None).is_err());
+    }
+
+    #[test]
+    fn preserves_reply_to_through_queue() {
+        let mut s = Scheduler::new();
+        // First message makes main busy
+        s.push_to_main("first".into(), None).unwrap();
+        // Second message with reply_to gets queued
+        s.push_to_main_with_reply(
+            "bob's report".into(),
+            Some("bob".into()),
+            Some("bob".into()),
+        )
+        .unwrap();
+        // Drain: reply_to must survive
+        let next = s.main_done().unwrap();
+        assert_eq!(next.content, "bob's report");
+        assert_eq!(next.from, Some("bob".into()));
+        assert_eq!(next.reply_to, Some("bob".into()));
+    }
+
+    #[test]
+    fn preserves_none_reply_to_through_queue() {
+        let mut s = Scheduler::new();
+        s.push_to_main("first".into(), None).unwrap();
+        // Message without reply_to (user prompt)
+        s.push_to_main_with_reply("user msg".into(), None, None).unwrap();
+        let next = s.main_done().unwrap();
+        assert_eq!(next.reply_to, None);
     }
 }
