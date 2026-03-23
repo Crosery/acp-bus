@@ -170,6 +170,7 @@ impl AcpClient {
         let adapter_name = adapter.name.clone();
         let bus_tx_clone = bus_tx.clone();
         let agent_name_clone = agent_name.clone();
+        let cwd_clone = cwd.clone();
 
         tokio::spawn(async move {
             let mut reader = BufReader::new(child_stdout);
@@ -194,6 +195,7 @@ impl AcpClient {
                                     &adapter_name,
                                     &bus_tx_clone,
                                     &agent_name_clone,
+                                    &cwd_clone,
                                 )
                                 .await;
                             }
@@ -539,6 +541,7 @@ async fn dispatch_message(
     adapter_name: &str,
     bus_tx: &Option<mpsc::UnboundedSender<BusEvent>>,
     agent_name: &str,
+    cwd: &str,
 ) {
     if msg.is_response() {
         if let Some(id) = msg.id.as_ref().and_then(|v| v.as_u64()) {
@@ -559,6 +562,7 @@ async fn dispatch_message(
             adapter_name,
             bus_tx,
             agent_name,
+            cwd,
         )
         .await;
     } else if msg.is_notification() {
@@ -574,6 +578,7 @@ async fn handle_reverse_request(
     adapter_name: &str,
     bus_tx: &Option<mpsc::UnboundedSender<BusEvent>>,
     agent_name: &str,
+    cwd: &str,
 ) {
     let method = msg.method.as_deref().unwrap_or("");
     let id = msg.id.as_ref().unwrap();
@@ -610,34 +615,36 @@ async fn handle_reverse_request(
             if path.is_empty() {
                 encode_error(id, -32602, "missing path")
             } else {
-                match tokio::fs::read_to_string(path).await {
-                    Ok(content) => {
-                        let line = params.get("line").and_then(|v| v.as_u64());
-                        let limit = params.get("limit").and_then(|v| v.as_u64());
-                        let result = if line.is_some() || limit.is_some() {
-                            let lines: Vec<&str> = content.lines().collect();
-                            let total = lines.len();
-                            let start = line.unwrap_or(1).max(1) as usize - 1;
-                            if start >= total {
-                                serde_json::json!({ "content": "" })
-                            } else {
-                                let end = if let Some(l) = limit {
-                                    (start + l as usize).min(total)
+                match validate_path_within_cwd(path, cwd) {
+                    Err(e) => encode_error(id, -32600, &format!("path outside working directory: {e}")),
+                    Ok(resolved) => match tokio::fs::read_to_string(&resolved).await {
+                        Ok(content) => {
+                            let line = params.get("line").and_then(|v| v.as_u64());
+                            let limit = params.get("limit").and_then(|v| v.as_u64());
+                            let result = if line.is_some() || limit.is_some() {
+                                let lines: Vec<&str> = content.lines().collect();
+                                let total = lines.len();
+                                let start = line.unwrap_or(1).max(1) as usize - 1;
+                                if start >= total {
+                                    serde_json::json!({ "content": "" })
                                 } else {
-                                    total
-                                };
-                                let slice = &lines[start..end];
-                                serde_json::json!({ "content": slice.join("\n") })
-                            }
-                        } else {
-                            serde_json::json!({ "content": content })
-                        };
-                        encode_response(id, result)
-                    }
-                    Err(_) => {
-                        // File doesn't exist — return empty (agent may want to create it)
-                        encode_response(id, serde_json::json!({ "content": "" }))
-                    }
+                                    let end = if let Some(l) = limit {
+                                        (start + l as usize).min(total)
+                                    } else {
+                                        total
+                                    };
+                                    let slice = &lines[start..end];
+                                    serde_json::json!({ "content": slice.join("\n") })
+                                }
+                            } else {
+                                serde_json::json!({ "content": content })
+                            };
+                            encode_response(id, result)
+                        }
+                        Err(_) => {
+                            encode_response(id, serde_json::json!({ "content": "" }))
+                        }
+                    },
                 }
             }
         }
@@ -647,14 +654,18 @@ async fn handle_reverse_request(
             if path.is_empty() || content.is_none() {
                 encode_error(id, -32602, "missing path or content")
             } else {
-                let content = content.unwrap();
-                let abs_path = std::path::Path::new(path);
-                if let Some(parent) = abs_path.parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
-                }
-                match tokio::fs::write(path, content).await {
-                    Ok(()) => encode_response(id, serde_json::json!({})),
-                    Err(e) => encode_error(id, -32000, &format!("cannot write: {path}: {e}")),
+                match validate_path_within_cwd(path, cwd) {
+                    Err(e) => encode_error(id, -32600, &format!("path outside working directory: {e}")),
+                    Ok(resolved) => {
+                        let content = content.unwrap();
+                        if let Some(parent) = resolved.parent() {
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
+                        match tokio::fs::write(&resolved, content).await {
+                            Ok(()) => encode_response(id, serde_json::json!({})),
+                            Err(e) => encode_error(id, -32000, &format!("cannot write: {}: {e}", resolved.display())),
+                        }
+                    }
                 }
             }
         }
@@ -773,5 +784,49 @@ fn handle_notification(msg: RpcMessage, event_tx: &mpsc::UnboundedSender<ClientE
         if let Some(params) = msg.params {
             let _ = event_tx.send(ClientEvent::SessionUpdate(params));
         }
+    }
+}
+
+/// Check if a path is within the allowed working directory
+/// Validate that a path is within the allowed working directory.
+/// Returns the resolved absolute path on success.
+fn validate_path_within_cwd(path: &str, cwd: &str) -> Result<std::path::PathBuf, String> {
+    let cwd_canonical = match std::fs::canonicalize(cwd) {
+        Ok(p) => p,
+        Err(_) => return Err("cannot resolve working directory".to_string()),
+    };
+
+    let target = std::path::Path::new(path);
+    // Always resolve relative paths against cwd, not process CWD
+    let abs_target = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        cwd_canonical.join(target)
+    };
+
+    // For existing paths, canonicalize directly
+    // For non-existing paths (write), canonicalize the parent
+    let resolved = if abs_target.exists() {
+        std::fs::canonicalize(&abs_target)
+    } else if let Some(parent) = abs_target.parent() {
+        if parent.exists() {
+            std::fs::canonicalize(parent)
+                .map(|p| p.join(abs_target.file_name().unwrap_or_default()))
+        } else {
+            return Err("parent directory does not exist".to_string());
+        }
+    } else {
+        return Err("invalid path".to_string());
+    };
+
+    match resolved {
+        Ok(resolved) => {
+            if resolved.starts_with(&cwd_canonical) {
+                Ok(resolved)
+            } else {
+                Err("path outside working directory".to_string())
+            }
+        }
+        Err(_) => Err("cannot resolve path".to_string()),
     }
 }
