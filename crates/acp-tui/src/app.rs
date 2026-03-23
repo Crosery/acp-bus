@@ -53,6 +53,8 @@ pub struct App {
     socket_path: Option<String>,
     mcp_command: Option<String>,
     scheduler: SharedScheduler,
+    pending_waits: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<SendAndWaitResult>>>>,
+    wait_graph: Arc<Mutex<acp_core::wait_graph::WaitGraph>>,
 }
 
 impl App {
@@ -76,6 +78,8 @@ impl App {
                 .ok()
                 .map(|p| p.to_string_lossy().to_string()),
             scheduler: Arc::new(Mutex::new(acp_core::scheduler::Scheduler::new())),
+            pending_waits: Arc::new(Mutex::new(HashMap::new())),
+            wait_graph: Arc::new(Mutex::new(acp_core::wait_graph::WaitGraph::new())),
         }
     }
 
@@ -391,19 +395,146 @@ impl App {
                 };
                 let _ = reply_tx.send(result);
             }
-            BusEvent::SendAndWait { reply_tx, .. } => {
-                let _ = reply_tx.send(SendAndWaitResult {
-                    ok: false,
-                    reply_content: None,
-                    from_agent: None,
-                    error: Some("not yet implemented".into()),
+            BusEvent::SendAndWait {
+                from_agent,
+                to_agent,
+                content,
+                timeout_secs,
+                reply_tx,
+            } => {
+                // 1. Deadlock detection
+                {
+                    let mut wg = self.wait_graph.lock().await;
+                    if let Err(e) = wg.add_wait(&from_agent, &to_agent) {
+                        let _ = reply_tx.send(SendAndWaitResult {
+                            ok: false,
+                            reply_content: None,
+                            from_agent: None,
+                            error: Some(format!("deadlock detected: {e}")),
+                        });
+                        return;
+                    }
+                }
+
+                // 2. Validate target agent exists
+                {
+                    let ch = self.channel.lock().await;
+                    if !ch.agents.contains_key(&to_agent) {
+                        // Remove the wait edge we just added
+                        let mut wg = self.wait_graph.lock().await;
+                        wg.remove_wait(&from_agent);
+                        let _ = reply_tx.send(SendAndWaitResult {
+                            ok: false,
+                            reply_content: None,
+                            from_agent: None,
+                            error: Some(format!("target agent '{to_agent}' not found")),
+                        });
+                        return;
+                    }
+                }
+
+                // 3. Post message to channel (visible in UI)
+                {
+                    let mut ch = self.channel.lock().await;
+                    let (conversation_id, reply_to) =
+                        ch.resolve_reply_context(&from_agent, &to_agent);
+                    ch.post_directed_with_refs(
+                        &from_agent,
+                        &to_agent,
+                        &content,
+                        MessageKind::Chat,
+                        MessageTransport::BusTool,
+                        MessageStatus::Delivered,
+                        conversation_id,
+                        reply_to,
+                    );
+                }
+
+                // 4. Store pending wait (keyed by the waiting agent)
+                {
+                    let mut pw = self.pending_waits.lock().await;
+                    pw.insert(from_agent.clone(), reply_tx);
+                }
+
+                // 5. Dispatch prompt to target agent
+                let channel = self.channel.clone();
+                let clients = self.clients.clone();
+                let sp = self.socket_path.clone();
+                let mc = self.mcp_command.clone();
+                let sc = self.scheduler.clone();
+                let to = to_agent.clone();
+                let from = from_agent.clone();
+                let prompt = format!("[来自 {from_agent} 的消息（等待回复）]\n{content}");
+                tokio::spawn(do_prompt_with_reply(
+                    to, prompt, channel, clients, sp, mc, sc, from.clone(),
+                ));
+
+                // 6. Timeout cleanup (independent task)
+                let pw = self.pending_waits.clone();
+                let wg = self.wait_graph.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)).await;
+                    let mut pending = pw.lock().await;
+                    if let Some(tx) = pending.remove(&from) {
+                        let _ = tx.send(SendAndWaitResult {
+                            ok: false,
+                            reply_content: None,
+                            from_agent: None,
+                            error: Some("timeout: no reply received".into()),
+                        });
+                    }
+                    let mut graph = wg.lock().await;
+                    graph.remove_wait(&from);
                 });
             }
-            BusEvent::Reply { reply_tx, .. } => {
+            BusEvent::Reply {
+                from_agent,
+                to_agent,
+                content,
+                in_reply_to,
+                reply_tx,
+            } => {
+                // 1. Post reply message to channel (visible in UI)
+                let message_id = {
+                    let mut ch = self.channel.lock().await;
+                    ch.post_directed_with_refs(
+                        &from_agent,
+                        &to_agent,
+                        &content,
+                        MessageKind::Chat,
+                        MessageTransport::BusTool,
+                        MessageStatus::Delivered,
+                        None,
+                        in_reply_to,
+                    )
+                };
+
+                // 2. Fulfill pending wait if the target agent was waiting
+                let fulfilled = {
+                    let mut pw = self.pending_waits.lock().await;
+                    if let Some(tx) = pw.remove(&to_agent) {
+                        let _ = tx.send(SendAndWaitResult {
+                            ok: true,
+                            reply_content: Some(content.clone()),
+                            from_agent: Some(from_agent.clone()),
+                            error: None,
+                        });
+                        true
+                    } else {
+                        false
+                    }
+                };
+
+                // 3. Clean up wait graph
+                if fulfilled {
+                    let mut wg = self.wait_graph.lock().await;
+                    wg.remove_wait(&to_agent);
+                }
+
                 let _ = reply_tx.send(BusSendResult {
-                    message_id: None,
-                    delivered: false,
-                    error: Some("not yet implemented".into()),
+                    message_id: Some(message_id),
+                    delivered: true,
+                    error: None,
                 });
             }
         }
