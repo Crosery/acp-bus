@@ -896,12 +896,22 @@ impl App {
                                         map.remove(&name2);
                                     }
                                     let mut ch = channel2.lock().await;
+                                    let abnormal = code != Some(0);
                                     if let Some(agent) = ch.agents.get_mut(&name2) {
-                                        agent.status = AgentStatus::Disconnected;
+                                        agent.status = if abnormal {
+                                            AgentStatus::Error
+                                        } else {
+                                            AgentStatus::Disconnected
+                                        };
                                         agent.alive = false;
                                         agent.prompt_start_time = None;
                                     }
-                                    ch.post("系统", &format!("{name2} 退出 (code={code:?})"), true);
+                                    let msg = if abnormal {
+                                        format!("{name2} 异常退出 (code={code:?})")
+                                    } else {
+                                        format!("{name2} 退出 (code={code:?})")
+                                    };
+                                    ch.post("系统", &msg, true);
                                     let mut entry = acp_core::comm_log::entry(
                                         &ch.channel_id,
                                         "agent_lifecycle",
@@ -1468,11 +1478,21 @@ async fn start_agent_bg(
                                     map.remove(&name2);
                                 }
                                 let mut ch = channel2.lock().await;
+                                let abnormal = code != Some(0);
                                 if let Some(agent) = ch.agents.get_mut(&name2) {
-                                    agent.status = AgentStatus::Disconnected;
+                                    agent.status = if abnormal {
+                                        AgentStatus::Error
+                                    } else {
+                                        AgentStatus::Disconnected
+                                    };
                                     agent.alive = false;
                                 }
-                                ch.post("系统", &format!("{name2} 退出 (code={code:?})"), true);
+                                let msg = if abnormal {
+                                    format!("{name2} 异常退出 (code={code:?})")
+                                } else {
+                                    format!("{name2} 退出 (code={code:?})")
+                                };
+                                ch.post("系统", &msg, true);
                                 ch.state_changed();
                                 break;
                             }

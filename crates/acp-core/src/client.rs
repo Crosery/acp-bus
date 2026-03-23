@@ -204,7 +204,9 @@ impl AcpClient {
                 }
             }
             // Agent exited — notify
-            let _ = event_tx_clone.send(ClientEvent::Exited { code: None });
+            if event_tx_clone.send(ClientEvent::Exited { code: None }).is_err() {
+                warn!("failed to send agent exit event (receiver dropped)");
+            }
         });
 
         let mut client = Self {
@@ -353,7 +355,9 @@ impl AcpClient {
                         data: None,
                     }));
                 }
-                let _ = event_tx2.send(ClientEvent::Exited { code });
+                if event_tx2.send(ClientEvent::Exited { code }).is_err() {
+                    warn!("failed to send agent exit event (receiver dropped)");
+                }
             });
         }
 
