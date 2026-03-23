@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>acp-bus — 多 AI Agent 协作总线</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0a0f1a;
+  --bg-elevated: #101829;
+  --copper: #c8956c;
+  --copper-dim: #8b6544;
+  --copper-bright: #e8b88a;
+  --blue-ink: #1a2744;
+  --blue-line: #2a3f6a;
+  --text: #c8cdd8;
+  --text-dim: #6b7a94;
+  --text-bright: #e8ecf2;
+  --green: #5a9e6f;
+  --red-soft: #b85c5c;
+}
+
+html { scroll-behavior: smooth; font-size: 16px; }
+
+body {
+  font-family: 'Noto Serif SC', serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.8;
+  overflow-x: hidden;
+}
+
+/* ─── Blueprint grid background ─── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    linear-gradient(var(--blue-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--blue-line) 1px, transparent 1px);
+  background-size: 60px 60px;
+  opacity: 0.08;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ─── Scroll reveal ─── */
+.reveal {
+  opacity: 0;
+  transform: translateY(40px);
+  transition: opacity 0.8s ease, transform 0.8s ease;
+}
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.reveal-delay-1 { transition-delay: 0.15s; }
+.reveal-delay-2 { transition-delay: 0.3s; }
+.reveal-delay-3 { transition-delay: 0.45s; }
+.reveal-delay-4 { transition-delay: 0.6s; }
+.reveal-delay-5 { transition-delay: 0.75s; }
+
+/* ─── Layout ─── */
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 clamp(1.5rem, 4vw, 3rem);
+  position: relative;
+  z-index: 1;
+}
+
+section {
+  padding: clamp(4rem, 10vh, 8rem) 0;
+}
+
+/* ─── Hero ─── */
+.hero {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.hero-badge {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--copper);
+  border: 1px solid var(--copper-dim);
+  padding: 0.3em 1em;
+  margin-bottom: 2rem;
+}
+
+.hero h1 {
+  font-size: clamp(2.8rem, 7vw, 5.5rem);
+  font-weight: 900;
+  line-height: 1.15;
+  color: var(--text-bright);
+  margin-bottom: 1.5rem;
+}
+
+.hero h1 em {
+  font-style: normal;
+  color: var(--copper);
+}
+
+.hero-sub {
+  font-size: clamp(1.1rem, 2.5vw, 1.4rem);
+  color: var(--text-dim);
+  max-width: 560px;
+  margin-bottom: 3rem;
+}
+
+.hero-tech {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.hero-tech span {
+  border-bottom: 1px dashed var(--blue-line);
+  padding-bottom: 2px;
+}
+
+/* ─── Section headers ─── */
+.section-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--copper-dim);
+  margin-bottom: 1rem;
+}
+
+.section-title {
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 1rem;
+}
+
+.section-desc {
+  color: var(--text-dim);
+  max-width: 640px;
+  margin-bottom: 3rem;
+  font-size: 1.05rem;
+}
+
+/* ─── Concept trio ─── */
+.concept-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 2px;
+}
+
+.concept-item {
+  background: var(--bg-elevated);
+  padding: clamp(2rem, 4vw, 3rem);
+  position: relative;
+}
+
+.concept-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40px;
+  height: 2px;
+  background: var(--copper);
+}
+
+.concept-role {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--copper);
+  letter-spacing: 0.1em;
+  margin-bottom: 0.8rem;
+}
+
+.concept-name {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 0.8rem;
+}
+
+.concept-desc {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+/* ─── Architecture ─── */
+.arch-diagram {
+  background: var(--bg-elevated);
+  border: 1px solid var(--blue-line);
+  padding: clamp(2rem, 5vw, 4rem);
+  position: relative;
+  overflow: hidden;
+}
+
+.arch-diagram::after {
+  content: 'SYSTEM ARCHITECTURE';
+  position: absolute;
+  top: 1rem;
+  right: 1.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.15em;
+  color: var(--copper-dim);
+}
+
+.arch-layers {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.arch-layer {
+  display: flex;
+  align-items: stretch;
+  min-height: 70px;
+}
+
+.arch-label {
+  flex: 0 0 140px;
+  display: flex;
+  align-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--copper-dim);
+  padding-right: 1.5rem;
+  text-align: right;
+  justify-content: flex-end;
+  border-right: 1px solid var(--blue-line);
+}
+
+.arch-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem 1.5rem;
+  flex-wrap: wrap;
+}
+
+.arch-node {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  padding: 0.4em 0.8em;
+  border: 1px solid var(--blue-line);
+  color: var(--text);
+  transition: all 0.3s ease;
+}
+
+.arch-node:hover {
+  border-color: var(--copper);
+  color: var(--copper-bright);
+}
+
+.arch-node.primary {
+  border-color: var(--copper-dim);
+  color: var(--copper);
+}
+
+.arch-connector {
+  color: var(--text-dim);
+  font-size: 0.7rem;
+}
+
+/* ─── Features ─── */
+.features-list {
+  display: grid;
+  gap: 0;
+  counter-reset: feature;
+}
+
+.feature-item {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 0;
+  border-bottom: 1px solid var(--blue-line);
+  padding: 1.8rem 0;
+  counter-increment: feature;
+}
+
+.feature-item:first-child { border-top: 1px solid var(--blue-line); }
+
+.feature-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--copper-dim);
+  padding-top: 0.3rem;
+}
+
+.feature-num::before {
+  content: counter(feature, decimal-leading-zero);
+}
+
+.feature-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 0.4rem;
+}
+
+.feature-desc {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.feature-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--copper);
+  background: var(--blue-ink);
+  padding: 0.6em 1em;
+  margin-top: 0.8rem;
+  display: inline-block;
+  border-left: 2px solid var(--copper-dim);
+}
+
+/* ─── Protocol flow ─── */
+.protocol-flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: wrap;
+  padding: 2rem 0;
+}
+
+.protocol-step {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  padding: 0.5em 1em;
+  background: var(--bg-elevated);
+  border: 1px solid var(--blue-line);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.protocol-arrow {
+  color: var(--copper-dim);
+  padding: 0 0.3rem;
+  font-size: 0.9rem;
+}
+
+.protocol-step.active {
+  border-color: var(--copper);
+  color: var(--copper);
+}
+
+/* ─── Roadmap ─── */
+.roadmap {
+  position: relative;
+  padding-left: 2rem;
+}
+
+.roadmap::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--blue-line);
+}
+
+.roadmap-item {
+  position: relative;
+  padding: 1.2rem 0 2.5rem 2rem;
+}
+
+.roadmap-item::before {
+  content: '';
+  position: absolute;
+  left: -2rem;
+  top: 1.6rem;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--copper-dim);
+  background: var(--bg);
+  transform: translateX(-4px) rotate(45deg);
+}
+
+.roadmap-item.done::before {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.roadmap-phase {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--copper-dim);
+  letter-spacing: 0.1em;
+  margin-bottom: 0.3rem;
+}
+
+.roadmap-item.done .roadmap-phase {
+  color: var(--green);
+}
+
+.roadmap-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 0.3rem;
+}
+
+.roadmap-desc {
+  color: var(--text-dim);
+  font-size: 0.88rem;
+}
+
+/* ─── Footer ─── */
+.footer {
+  padding: 3rem 0;
+  border-top: 1px solid var(--blue-line);
+  text-align: center;
+}
+
+.footer-links {
+  display: flex;
+  justify-content: center;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+}
+
+.footer-links a {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--copper);
+  text-decoration: none;
+  letter-spacing: 0.05em;
+  transition: color 0.2s;
+}
+
+.footer-links a:hover { color: var(--copper-bright); }
+
+.footer-copy {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 640px) {
+  .arch-label { flex: 0 0 80px; font-size: 0.6rem; }
+  .arch-node { font-size: 0.7rem; }
+  .feature-item { grid-template-columns: 40px 1fr; }
+  .protocol-flow { flex-direction: column; align-items: flex-start; }
+  .protocol-arrow { transform: rotate(90deg); padding: 0.2rem 0; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ HERO ═══ -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge reveal">OPEN SOURCE · RUST · MIT LICENSE</div>
+    <h1 class="reveal reveal-delay-1">让 AI<br><em>组团干活</em></h1>
+    <p class="hero-sub reveal reveal-delay-2">不是让一个 AI 更强，而是让多个 AI 像团队一样协作。<br>acp-bus 是一条多 Agent 协作总线。</p>
+    <div class="hero-tech reveal reveal-delay-3">
+      <span>Rust</span>
+      <span>tokio</span>
+      <span>ratatui</span>
+      <span>ACP Protocol</span>
+      <span>JSON-RPC 2.0</span>
+      <span>MCP</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ CONCEPT ═══ -->
+<section>
+  <div class="container">
+    <div class="section-label reveal">CORE CONCEPT</div>
+    <h2 class="section-title reveal">三个角色，一条总线</h2>
+    <div class="concept-grid">
+      <div class="concept-item reveal reveal-delay-1">
+        <div class="concept-role">MAIN AGENT</div>
+        <div class="concept-name">Team Lead</div>
+        <p class="concept-desc">理解需求、拆解任务、组建团队、质量把关。像写 Prompt 一样为每个 Worker 编写专属角色定义和工作指令。</p>
+      </div>
+      <div class="concept-item reveal reveal-delay-2">
+        <div class="concept-role">WORKER AGENT</div>
+        <div class="concept-name">全能工程师</div>
+        <p class="concept-desc">完整的 Claude Code 实例。读写文件、执行命令、启动 subagent、使用 superpowers 技能，自主规划和交付。</p>
+      </div>
+      <div class="concept-item reveal reveal-delay-3">
+        <div class="concept-role">BUS</div>
+        <div class="concept-name">通信总线</div>
+        <p class="concept-desc">Agent 间通过 bus_send_message 直接点对点通信，无需经过 Main 中转。Unix Socket 实现，低延迟高可靠。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ ARCHITECTURE ═══ -->
+<section>
+  <div class="container">
+    <div class="section-label reveal">ARCHITECTURE</div>
+    <h2 class="section-title reveal">系统架构</h2>
+    <p class="section-desc reveal">四层架构，每层职责清晰。协议层无 IO，核心层无 UI，通信层无业务逻辑。</p>
+
+    <div class="arch-diagram reveal">
+      <div class="arch-layers">
+        <div class="arch-layer">
+          <div class="arch-label">界面层</div>
+          <div class="arch-content">
+            <span class="arch-node primary">TUI App</span>
+            <span class="arch-connector">←</span>
+            <span class="arch-node">MessagesView</span>
+            <span class="arch-node">StatusBar</span>
+            <span class="arch-node">InputBox</span>
+          </div>
+        </div>
+        <div class="arch-layer">
+          <div class="arch-label">调度层</div>
+          <div class="arch-content">
+            <span class="arch-node primary">Router</span>
+            <span class="arch-node primary">Scheduler</span>
+            <span class="arch-node">Channel</span>
+            <span class="arch-node">Store</span>
+          </div>
+        </div>
+        <div class="arch-layer">
+          <div class="arch-label">通信层</div>
+          <div class="arch-content">
+            <span class="arch-node primary">Bus Socket</span>
+            <span class="arch-connector">↔</span>
+            <span class="arch-node primary">MCP Server</span>
+            <span class="arch-connector">↔</span>
+            <span class="arch-node">AcpClient</span>
+          </div>
+        </div>
+        <div class="arch-layer">
+          <div class="arch-label">协议层</div>
+          <div class="arch-content">
+            <span class="arch-node">JSON-RPC 2.0</span>
+            <span class="arch-node">ACP Handshake</span>
+            <span class="arch-node">LineCodec</span>
+            <span class="arch-node">ContentBlock</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ PROTOCOL ═══ -->
+<section>
+  <div class="container">
+    <div class="section-label reveal">PROTOCOL</div>
+    <h2 class="section-title reveal">ACP 握手序列</h2>
+    <div class="protocol-flow reveal">
+      <span class="protocol-step active">initialize</span>
+      <span class="protocol-arrow">→</span>
+      <span class="protocol-step">authenticate?</span>
+      <span class="protocol-arrow">→</span>
+      <span class="protocol-step active">session/new</span>
+      <span class="protocol-arrow">→</span>
+      <span class="protocol-step">session/prompt</span>
+      <span class="protocol-arrow">→</span>
+      <span class="protocol-step active">session/update ↻</span>
+    </div>
+    <p class="section-desc reveal" style="margin-top: 1.5rem;">每个 Agent 通过 stdin/stdout 管道与 Bus 通信。MCP Server 内置到主二进制，通过 current_exe() 自动发现。</p>
+  </div>
+</section>
+
+<!-- ═══ FEATURES ═══ -->
+<section>
+  <div class="container">
+    <div class="section-label reveal">FEATURES</div>
+    <h2 class="section-title reveal">核心特性</h2>
+
+    <div class="features-list">
+      <div class="feature-item reveal">
+        <div class="feature-num"></div>
+        <div>
+          <div class="feature-title">一行创建 + 派发</div>
+          <div class="feature-desc">创建 Agent 的同时指定任务，支持多行任务描述。Main Agent 的回复自动解析执行。</div>
+          <div class="feature-code">/add w1 claude 你是代码审查专家。任务：审查 PR #42...</div>
+        </div>
+      </div>
+      <div class="feature-item reveal">
+        <div class="feature-num"></div>
+        <div>
+          <div class="feature-title">Agent 间直接通信</div>
+          <div class="feature-desc">Worker 通过 bus_send_message MCP 工具直接给其他 Agent 发消息，无需经过 Main 中转。</div>
+          <div class="feature-code">bus_send_message(to: "w2", content: "接口定义已完成，请查收")</div>
+        </div>
+      </div>
+      <div class="feature-item reveal">
+        <div class="feature-num"></div>
+        <div>
+          <div class="feature-title">智能调度</div>
+          <div class="feature-desc">Main Agent 消息串行化（Scheduler 队列），防止消息风暴。Worker 之间完全并行。</div>
+        </div>
+      </div>
+      <div class="feature-item reveal">
+        <div class="feature-num"></div>
+        <div>
+          <div class="feature-title">@mention 路由</div>
+          <div class="feature-desc">自动解析 @agent 提及，提取 per-agent 内容段，分发到对应 Agent。最大路由深度 5 层。</div>
+        </div>
+      </div>
+      <div class="feature-item reveal">
+        <div class="feature-num"></div>
+        <div>
+          <div class="feature-title">多模型混合</div>
+          <div class="feature-desc">同一频道内混用 Claude、Gemini、Codex，按 Adapter 配置切换。每个 Agent 可以使用不同的 LLM 后端。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ ROADMAP ═══ -->
+<section>
+  <div class="container">
+    <div class="section-label reveal">ROADMAP</div>
+    <h2 class="section-title reveal">演进路线</h2>
+    <p class="section-desc reveal">从"能用"到"好用"，六个阶段的渐进式演进。</p>
+
+    <div class="roadmap">
+      <div class="roadmap-item done reveal">
+        <div class="roadmap-phase">PHASE 1 ✓</div>
+        <div class="roadmap-title">稳定性与可靠性</div>
+        <div class="roadmap-desc">ACP 握手、MCP 内置、Agent 间通信、多行任务解析、Scheduler 防风暴、原子写入</div>
+      </div>
+      <div class="roadmap-item reveal">
+        <div class="roadmap-phase">PHASE 2</div>
+        <div class="roadmap-title">通信增强</div>
+        <div class="roadmap-desc">消息 ACK 确认、历史查询、广播消息、优先级队列、断线重连</div>
+      </div>
+      <div class="roadmap-item reveal">
+        <div class="roadmap-phase">PHASE 3</div>
+        <div class="roadmap-title">智能调度</div>
+        <div class="roadmap-desc">动态负载均衡、任务依赖图、超时重试、Agent 池化、成本追踪</div>
+      </div>
+      <div class="roadmap-item reveal">
+        <div class="roadmap-phase">PHASE 4</div>
+        <div class="roadmap-title">可观测性</div>
+        <div class="roadmap-desc">实时 Dashboard、通信拓扑图、会话回放、OpenTelemetry 集成</div>
+      </div>
+      <div class="roadmap-item reveal">
+        <div class="roadmap-phase">PHASE 5</div>
+        <div class="roadmap-title">生态集成</div>
+        <div class="roadmap-desc">IDE 插件、HTTP/WebSocket API、Agent 模板市场、持久化频道</div>
+      </div>
+      <div class="roadmap-item reveal">
+        <div class="roadmap-phase">PHASE 6</div>
+        <div class="roadmap-title">高级协作</div>
+        <div class="roadmap-desc">层级团队、投票决策、知识共享、代码冲突检测、去中心化 Swarm 模式</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ FOOTER ═══ -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-links">
+      <a href="https://github.com/Crosery/acp-bus">GitHub</a>
+      <a href="https://github.com/Crosery/acp-bus#安装与运行">快速开始</a>
+    </div>
+    <p class="footer-copy">acp-bus · MIT License · Built with Rust</p>
+  </div>
+</footer>
+
+<script>
+// Scroll reveal
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.15, rootMargin: '0px 0px -40px 0px' });
+
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>
