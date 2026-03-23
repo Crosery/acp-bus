@@ -1536,7 +1536,7 @@ async fn execute_agent_commands(
                     if let Some(task) = task {
                         let ctx2 = ctx.clone();
                         tokio::spawn(async move {
-                            wait_for_agents(&[agent_name.clone()], &ctx2.clients, 30).await;
+                            wait_for_agents(std::slice::from_ref(&agent_name), &ctx2.clients, 30).await;
                             {
                                 let mut chan = ctx2.channel.lock().await;
                                 chan.post_directed("main", &agent_name, &task,

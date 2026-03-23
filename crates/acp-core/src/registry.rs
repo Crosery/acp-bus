@@ -11,6 +11,12 @@ pub struct Registry {
     active_channel_id: Option<String>,
 }
 
+impl Default for Registry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Registry {
     pub fn new() -> Self {
         Self {
@@ -55,8 +61,8 @@ impl Registry {
 
     pub fn list(&self) -> Vec<ChannelSummary> {
         self.channels
-            .iter()
-            .map(|(id, _)| ChannelSummary {
+            .keys()
+            .map(|id| ChannelSummary {
                 id: id.clone(),
                 is_active: self.active_channel_id.as_deref() == Some(id.as_str()),
             })

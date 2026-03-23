@@ -36,6 +36,12 @@ struct MessageLine {
     gap: Option<String>,
 }
 
+impl Default for MessagesView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessagesView {
     pub fn new() -> Self {
         Self {

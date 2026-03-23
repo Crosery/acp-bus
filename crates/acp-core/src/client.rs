@@ -582,6 +582,7 @@ impl AcpClient {
 }
 
 /// Dispatch an incoming message from the agent's stdout
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_message(
     msg: RpcMessage,
     pending: &Arc<Mutex<HashMap<u64, PendingCallback>>>,
@@ -701,19 +702,19 @@ async fn handle_reverse_request(
         "fs/write_text_file" => {
             let path = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let content = params.get("content").and_then(|v| v.as_str());
-            if path.is_empty() || content.is_none() {
-                encode_error(id, -32602, "missing path or content")
-            } else {
-                match validate_path_within_cwd(path, cwd) {
-                    Err(e) => encode_error(id, -32600, &format!("path outside working directory: {e}")),
-                    Ok(resolved) => {
-                        let content = content.unwrap();
-                        if let Some(parent) = resolved.parent() {
-                            let _ = tokio::fs::create_dir_all(parent).await;
-                        }
-                        match tokio::fs::write(&resolved, content).await {
-                            Ok(()) => encode_response(id, serde_json::json!({})),
-                            Err(e) => encode_error(id, -32000, &format!("cannot write: {}: {e}", resolved.display())),
+            match (path.is_empty(), content) {
+                (true, _) | (_, None) => encode_error(id, -32602, "missing path or content"),
+                (false, Some(content)) => {
+                    match validate_path_within_cwd(path, cwd) {
+                        Err(e) => encode_error(id, -32600, &format!("path outside working directory: {e}")),
+                        Ok(resolved) => {
+                            if let Some(parent) = resolved.parent() {
+                                let _ = tokio::fs::create_dir_all(parent).await;
+                            }
+                            match tokio::fs::write(&resolved, content).await {
+                                Ok(()) => encode_response(id, serde_json::json!({})),
+                                Err(e) => encode_error(id, -32000, &format!("cannot write: {}: {e}", resolved.display())),
+                            }
                         }
                     }
                 }

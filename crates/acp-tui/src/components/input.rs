@@ -26,6 +26,12 @@ static COMMANDS: &[&str] = &[
     "/save",
 ];
 
+impl Default for InputBox {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InputBox {
     pub fn new() -> Self {
         Self {
@@ -138,7 +144,7 @@ impl InputBox {
             if line_w == 0 {
                 lines += 1;
             } else {
-                lines += ((line_w + w - 1) / w) as u16; // ceil division
+                lines += line_w.div_ceil(w) as u16;
             }
         }
         lines.max(1)
@@ -211,7 +217,7 @@ impl InputBox {
 
         // For /add command, second arg = agent name, third arg = adapter
         let parts: Vec<&str> = input.split_whitespace().collect();
-        if parts.len() >= 1 && parts[0] == "/add" && parts.len() == 2 {
+        if !parts.is_empty() && parts[0] == "/add" && parts.len() == 2 {
             // Completing adapter name - already handled by completions
         }
     }

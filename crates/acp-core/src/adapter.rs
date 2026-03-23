@@ -125,21 +125,19 @@ fn load_dotenv() -> HashMap<String, String> {
         dirs::config_dir().map(|d| d.join("nvim/.env")),
         dirs::home_dir().map(|d| d.join(".env")),
     ];
-    for candidate in &candidates {
-        if let Some(path) = candidate {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                for line in content.lines() {
-                    let line = line.trim();
-                    if line.is_empty() || line.starts_with('#') {
-                        continue;
-                    }
-                    if let Some((key, val)) = line.split_once('=') {
-                        let val = val.trim().trim_matches('"');
-                        vars.insert(key.trim().to_string(), val.to_string());
-                    }
+    for path in candidates.iter().flatten() {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
                 }
-                break; // Use first found
+                if let Some((key, val)) = line.split_once('=') {
+                    let val = val.trim().trim_matches('"');
+                    vars.insert(key.trim().to_string(), val.to_string());
+                }
             }
+            break; // Use first found
         }
     }
     vars

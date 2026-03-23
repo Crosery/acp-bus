@@ -256,6 +256,7 @@ impl Channel {
         self.messages.last().map(|m| m.id).unwrap_or(0)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn post_directed_with_refs(
         &mut self,
         from: &str,
