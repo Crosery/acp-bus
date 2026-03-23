@@ -334,18 +334,9 @@ impl App {
                         error: Some("only main agent can create agents".into()),
                     }
                 } else {
-                    // Post task dispatch message immediately if task provided
-                    if let Some(ref task_content) = task {
-                        let mut ch = self.ctx.channel.lock().await;
-                        ch.post_directed(
-                            "main",
-                            &name,
-                            task_content,
-                            MessageKind::Task,
-                            MessageTransport::Internal,
-                            MessageStatus::Delivered,
-                        );
-                    }
+                    // Don't post dispatch message here — it would appear before
+                    // main's streaming text. The task will be visible in the
+                    // agent's tab when do_prompt dispatches it after connect.
                     // Spawn agent in background
                     let ctx = self.ctx.clone();
                     let bus_tx = Some(self.bus_tx.clone());
