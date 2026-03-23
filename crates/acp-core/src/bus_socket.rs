@@ -17,6 +17,11 @@ pub async fn start_bus_socket(
     let _ = std::fs::remove_file(&path);
 
     let listener = UnixListener::bind(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
     debug!(path = %path.display(), "bus socket listening");
 
     let cleanup_path = path.clone();
