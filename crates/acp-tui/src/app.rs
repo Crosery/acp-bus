@@ -766,6 +766,7 @@ impl App {
         let bus_tx = self.bus_tx.clone();
         let socket_path = self.socket_path.clone();
         let mcp_command = self.mcp_command.clone();
+        let scheduler = self.scheduler.clone();
 
         tokio::spawn(async move {
             let opts = AdapterOpts {
@@ -787,8 +788,8 @@ impl App {
                     return;
                 }
             };
-            config.socket_path = socket_path;
-            config.mcp_command = mcp_command;
+            config.socket_path = socket_path.clone();
+            config.mcp_command = mcp_command.clone();
 
             let system_prompt = config.system_prompt.clone();
 
@@ -830,6 +831,21 @@ impl App {
                         entry.detail = Some(format!("agent online via {adapter_name}"));
                         let _ = acp_core::comm_log::append(&ch.cwd, &entry).await;
                         ch.state_changed();
+                    }
+
+                    // Dispatch pending task if agent had one queued before connecting
+                    let pending = {
+                        let mut ch = channel.lock().await;
+                        ch.agents.get_mut(&name).and_then(|a| a.pending_task.take())
+                    };
+                    if let Some(task) = pending {
+                        let ch = channel.clone();
+                        let cl = clients.clone();
+                        let sp2 = socket_path.clone();
+                        let mc2 = mcp_command.clone();
+                        let sc2 = scheduler.clone();
+                        let n = name.clone();
+                        tokio::spawn(do_prompt(n, task, ch, cl, sp2, mc2, sc2));
                     }
 
                     // Event listener for this agent
@@ -1035,11 +1051,12 @@ async fn do_prompt_inner(
         Some(c) => c,
         None => {
             let mut ch = channel.lock().await;
-            ch.post("系统", &format!("{name} 未连接（等待超时）"), true);
+            ch.post("系统", &format!("{name} 未连接（等待超时），任务已暂存"), true);
             if let Some(agent) = ch.agents.get_mut(&name) {
                 agent.status = AgentStatus::Idle;
                 agent.streaming = false;
                 agent.prompt_start_time = None;
+                agent.pending_task = Some(content);
             }
             ch.state_changed();
             return;
@@ -1301,6 +1318,7 @@ async fn execute_agent_commands(
                         bus_tx.clone(),
                         socket_path.clone(),
                         mcp_command.clone(),
+                        scheduler.clone(),
                     )
                     .await;
                     added.push(agent_name.clone());
@@ -1370,6 +1388,7 @@ async fn start_agent_bg(
     bus_tx: Option<mpsc::UnboundedSender<BusEvent>>,
     socket_path: Option<String>,
     mcp_command: Option<String>,
+    scheduler: SharedScheduler,
 ) {
     let cwd = {
         let ch = channel.lock().await;
@@ -1396,8 +1415,8 @@ async fn start_agent_bg(
                 return;
             }
         };
-        config.socket_path = socket_path;
-        config.mcp_command = mcp_command;
+        config.socket_path = socket_path.clone();
+        config.mcp_command = mcp_command.clone();
 
         let system_prompt = config.system_prompt.clone();
 
@@ -1426,6 +1445,21 @@ async fn start_agent_bg(
                     }
                     ch.post("系统", &format!("{name} ({adapter_name}) 已上线"), true);
                     ch.state_changed();
+                }
+
+                // Dispatch pending task if agent had one queued before connecting
+                let pending_bg = {
+                    let mut ch = channel.lock().await;
+                    ch.agents.get_mut(&name).and_then(|a| a.pending_task.take())
+                };
+                if let Some(task) = pending_bg {
+                    let ch = channel.clone();
+                    let cl = clients.clone();
+                    let sp2 = socket_path.clone();
+                    let mc2 = mcp_command.clone();
+                    let sc2 = scheduler.clone();
+                    let n = name.clone();
+                    tokio::spawn(do_prompt(n, task, ch, cl, sp2, mc2, sc2));
                 }
 
                 let channel2 = channel.clone();

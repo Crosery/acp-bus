@@ -63,6 +63,8 @@ pub struct Agent {
     pub last_closed_conversation_id: Option<u64>,
     /// Recent tool calls (newest first, max 5)
     pub tool_calls: Vec<ToolCall>,
+    /// Task pending delivery (stored when agent wasn't connected at dispatch time)
+    pub pending_task: Option<String>,
 }
 
 impl Agent {
@@ -86,6 +88,7 @@ impl Agent {
             waiting_conversation_id: None,
             last_closed_conversation_id: None,
             tool_calls: Vec::new(),
+            pending_task: None,
         }
     }
 
@@ -109,6 +112,7 @@ impl Agent {
             waiting_conversation_id: None,
             last_closed_conversation_id: None,
             tool_calls: Vec::new(),
+            pending_task: None,
         }
     }
 
