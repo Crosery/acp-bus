@@ -31,6 +31,13 @@ pub const STATUS_ERROR_BADGE: Style = Style::new()
     .bg(Color::Red)
     .add_modifier(Modifier::BOLD);
 
+pub const THINKING_PREFIX: Style = Style::new()
+    .fg(Color::Rgb(120, 100, 160))
+    .add_modifier(Modifier::DIM);
+pub const THINKING_TEXT: Style = Style::new()
+    .fg(Color::Rgb(140, 130, 170))
+    .add_modifier(Modifier::ITALIC);
+
 pub fn status_icon(status: &str) -> &'static str {
     match status {
         "idle" => "◉",

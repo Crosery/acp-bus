@@ -18,6 +18,8 @@ pub struct MessagesView {
     pub filter: Option<String>,
     /// Live streaming previews: (agent_name, partial_content)
     pub streaming: Vec<(String, String)>,
+    /// Live thinking previews: (agent_name, thinking_content)
+    pub thinking: Vec<(String, String)>,
     /// Auto-scroll to bottom on new messages (disabled when user scrolls up)
     auto_scroll: bool,
     /// Last known visible height (updated during render)
@@ -50,6 +52,7 @@ impl MessagesView {
             total_rendered_lines: 0,
             filter: None,
             streaming: Vec::new(),
+            thinking: Vec::new(),
             auto_scroll: true,
             visible_height: 40,
         }
@@ -85,7 +88,9 @@ impl MessagesView {
     pub fn scroll_down(&mut self, n: u16) {
         self.scroll_offset = self.scroll_offset.saturating_add(n);
         // Re-enable auto-scroll if we're at or near the bottom
-        let max_offset = self.total_rendered_lines.saturating_sub(self.visible_height);
+        let max_offset = self
+            .total_rendered_lines
+            .saturating_sub(self.visible_height);
         if self.scroll_offset >= max_offset {
             self.auto_scroll = true;
         }
@@ -214,7 +219,10 @@ impl MessagesView {
                 Some(to) => format!("{} → {}", line.from, to),
                 None => line.from.clone(),
             };
-            header.push(Span::styled(name_text, name_style.add_modifier(Modifier::BOLD)));
+            header.push(Span::styled(
+                name_text,
+                name_style.add_modifier(Modifier::BOLD),
+            ));
 
             // Timestamp (dimmer, right after name)
             if !line.timestamp.is_empty() {
@@ -272,6 +280,44 @@ impl MessagesView {
             }
         }
 
+        // Append live thinking previews (only when not already streaming text)
+        for (name, buf) in &self.thinking {
+            if buf.is_empty() {
+                continue;
+            }
+            // Skip if this agent already has a streaming preview
+            if self
+                .streaming
+                .iter()
+                .any(|(n, b)| n == name && !b.is_empty())
+            {
+                continue;
+            }
+            // Apply filter
+            if let Some(ref f) = self.filter {
+                if name != f {
+                    continue;
+                }
+            }
+
+            if !text.is_empty() {
+                text.push(Line::from(""));
+            }
+
+            text.push(Line::from(vec![
+                Span::styled(name.clone(), theme::AGENT_MSG.add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "  ...".to_string(),
+                    Style::default().fg(Color::Rgb(120, 100, 160)),
+                ),
+            ]));
+            let lines: Vec<&str> = buf.lines().collect();
+            let start = lines.len().saturating_sub(5);
+            for line in &lines[start..] {
+                text.push(Line::from(format_thinking_line(line)));
+            }
+        }
+
         text
     }
 }
@@ -298,4 +344,44 @@ fn highlight_mentions(text: &str) -> Vec<Span<'static>> {
     }
 
     spans
+}
+
+/// Format a thinking line with ┊ prefix and dim italic style.
+/// Unlike normal messages, thinking lines do NOT highlight @mentions.
+fn format_thinking_line(text: &str) -> Vec<Span<'static>> {
+    vec![
+        Span::styled("┊ ".to_string(), theme::THINKING_PREFIX),
+        Span::styled(text.to_string(), theme::THINKING_TEXT),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spans_text(spans: &[Span]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn format_thinking_line_adds_prefix() {
+        let spans = format_thinking_line("让我分析一下");
+        let text = spans_text(&spans);
+        assert!(text.starts_with("┊ "));
+        assert!(text.contains("让我分析一下"));
+    }
+
+    #[test]
+    fn format_thinking_line_empty_input() {
+        let spans = format_thinking_line("");
+        let text = spans_text(&spans);
+        assert_eq!(text, "┊ ");
+    }
+
+    #[test]
+    fn format_thinking_line_preserves_content_exactly() {
+        let spans = format_thinking_line("hello @world");
+        let text = spans_text(&spans);
+        assert_eq!(text, "┊ hello @world");
+    }
 }

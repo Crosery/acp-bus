@@ -51,6 +51,8 @@ pub struct Agent {
     pub activity: Option<String>,
     pub streaming: bool,
     pub stream_buf: String,
+    /// Accumulated thinking text (from agent_thought_chunk events)
+    pub thinking_buf: String,
     pub system_prompt: Option<String>,
     pub prompted: bool,
     pub session_id: Option<String>,
@@ -81,6 +83,7 @@ impl Agent {
             activity: None,
             streaming: false,
             stream_buf: String::new(),
+            thinking_buf: String::new(),
             system_prompt,
             prompted: false,
             session_id: None,
@@ -107,6 +110,7 @@ impl Agent {
             activity: None,
             streaming: false,
             stream_buf: String::new(),
+            thinking_buf: String::new(),
             system_prompt: None,
             prompted: false,
             session_id: None,
@@ -133,10 +137,13 @@ impl Agent {
         if let Some(last) = self.tool_calls.first_mut() {
             last.status = ToolCallStatus::Done;
         }
-        self.tool_calls.insert(0, ToolCall {
-            name,
-            status: ToolCallStatus::Running,
-        });
+        self.tool_calls.insert(
+            0,
+            ToolCall {
+                name,
+                status: ToolCallStatus::Running,
+            },
+        );
         if self.tool_calls.len() > MAX_TOOL_HISTORY {
             self.tool_calls.truncate(MAX_TOOL_HISTORY);
         }
@@ -151,6 +158,7 @@ impl Agent {
     pub fn reset_stream(&mut self) {
         self.streaming = false;
         self.stream_buf.clear();
+        self.thinking_buf.clear();
         self.activity = None;
         self.has_bus_activity = false;
     }
@@ -204,5 +212,19 @@ mod tests {
         let mut agent = Agent::new_spawned("w1".into(), "claude".into(), None);
         agent.stream_buf.push_str("some output");
         assert!(!agent.should_show_empty_output());
+    }
+
+    #[test]
+    fn new_spawned_has_empty_thinking_buf() {
+        let agent = Agent::new_spawned("w1".into(), "claude".into(), None);
+        assert!(agent.thinking_buf.is_empty());
+    }
+
+    #[test]
+    fn reset_stream_clears_thinking_buf() {
+        let mut agent = Agent::new_spawned("w1".into(), "claude".into(), None);
+        agent.thinking_buf.push_str("some thinking");
+        agent.reset_stream();
+        assert!(agent.thinking_buf.is_empty());
     }
 }

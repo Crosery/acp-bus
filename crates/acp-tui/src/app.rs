@@ -562,6 +562,7 @@ impl App {
             tool_calls: Vec::new(),
         });
         self.messages.streaming.clear();
+        self.messages.thinking.clear();
 
         let ch = self.ctx.channel.lock().await;
         for (_, agent) in ch.agents.iter() {
@@ -588,6 +589,11 @@ impl App {
                 self.messages
                     .streaming
                     .push((agent.name.clone(), agent.stream_buf.clone()));
+            }
+            if !agent.thinking_buf.is_empty() {
+                self.messages
+                    .thinking
+                    .push((agent.name.clone(), agent.thinking_buf.clone()));
             }
         }
     }
@@ -1121,6 +1127,14 @@ impl App {
                                                     }
                                                 }
                                                 Some("agent_thought_chunk") => {
+                                                    if let Some(content) = update.get("content") {
+                                                        if let Some(text) = content
+                                                            .get("text")
+                                                            .and_then(|v| v.as_str())
+                                                        {
+                                                            agent.thinking_buf.push_str(text);
+                                                        }
+                                                    }
                                                     agent.activity = Some("thinking".into());
                                                 }
                                                 Some("agent_message_start") => {
@@ -1250,6 +1264,7 @@ async fn do_prompt_inner(name: String, content: String, ctx: BusContext, reply_t
             agent.status = AgentStatus::Streaming;
             agent.streaming = true;
             agent.stream_buf.clear();
+            agent.thinking_buf.clear();
             agent.has_bus_activity = false;
             agent.activity = Some("receiving".into());
             agent.current_task = Some(content.chars().take(100).collect());
@@ -1327,6 +1342,7 @@ async fn do_prompt_inner(name: String, content: String, ctx: BusContext, reply_t
             agent.activity = None;
             agent.prompt_start_time = None;
             agent.current_task = None;
+            agent.thinking_buf.clear();
             std::mem::take(&mut agent.stream_buf)
         } else {
             return;
@@ -1757,6 +1773,13 @@ async fn start_agent_bg(
                                                 }
                                             }
                                             Some("agent_thought_chunk") => {
+                                                if let Some(content) = update.get("content") {
+                                                    if let Some(text) =
+                                                        content.get("text").and_then(|v| v.as_str())
+                                                    {
+                                                        agent.thinking_buf.push_str(text);
+                                                    }
+                                                }
                                                 agent.activity = Some("thinking".into());
                                             }
                                             Some("agent_message_start" | "agent_message_end") => {
