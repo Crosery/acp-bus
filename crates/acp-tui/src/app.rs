@@ -257,6 +257,10 @@ impl App {
                             conversation_id,
                             reply_to,
                         );
+                        // Mark bus activity so "无文本输出" is suppressed
+                        if let Some(agent) = ch.agents.get_mut(&from_agent) {
+                            agent.has_bus_activity = true;
+                        }
                         if reply_to.is_none() && ch.agents.contains_key(&from_agent) {
                             ch.mark_waiting(
                                 &from_agent,
@@ -344,19 +348,16 @@ impl App {
                     let name_clone = name.clone();
                     tokio::spawn(async move {
                         let ctx2 = ctx.clone();
-                        start_agent_bg(
-                            name_clone.clone(),
-                            adapter,
-                            ctx,
-                            bus_tx,
-                        )
-                        .await;
+                        start_agent_bg(name_clone.clone(), adapter, ctx, bus_tx).await;
                         // If task was provided, dispatch it after agent connects
                         if let Some(task_content) = task_clone {
                             do_prompt(name_clone, task_content, ctx2).await;
                         }
                     });
-                    CreateAgentResult { ok: true, error: None }
+                    CreateAgentResult {
+                        ok: true,
+                        error: None,
+                    }
                 };
                 let _ = reply_tx.send(result);
             }
@@ -385,7 +386,10 @@ impl App {
                     }
                     let mut ch = self.ctx.channel.lock().await;
                     ch.remove_agent(&name);
-                    RemoveAgentResult { ok: true, error: None }
+                    RemoveAgentResult {
+                        ok: true,
+                        error: None,
+                    }
                 };
                 let _ = reply_tx.send(result);
             }
@@ -455,9 +459,7 @@ impl App {
                 let to = to_agent.clone();
                 let from = from_agent.clone();
                 let prompt = format!("[{from_agent} 等待你的回复，用 bus_reply(\"{from_agent}\", content) 回复后立即停止]\n{content}");
-                tokio::spawn(do_prompt_with_reply(
-                    to, prompt, ctx, from.clone(),
-                ));
+                tokio::spawn(do_prompt_with_reply(to, prompt, ctx, from.clone()));
 
                 // 6. Timeout cleanup (independent task)
                 let pw = self.ctx.pending_waits.clone();
@@ -487,7 +489,7 @@ impl App {
                 // 1. Post reply message to channel (visible in UI)
                 let message_id = {
                     let mut ch = self.ctx.channel.lock().await;
-                    ch.post_directed_with_refs(
+                    let id = ch.post_directed_with_refs(
                         &from_agent,
                         &to_agent,
                         &content,
@@ -496,7 +498,12 @@ impl App {
                         MessageStatus::Delivered,
                         None,
                         in_reply_to,
-                    )
+                    );
+                    // Mark bus activity
+                    if let Some(agent) = ch.agents.get_mut(&from_agent) {
+                        agent.has_bus_activity = true;
+                    }
+                    id
                 };
 
                 // 2. Fulfill pending wait if the target agent was waiting
@@ -568,10 +575,14 @@ impl App {
                 waiting_reply_from: agent.waiting_reply_from.clone(),
                 waiting_since: agent.waiting_since,
                 waiting_conversation_id: agent.waiting_conversation_id,
-                tool_calls: agent.tool_calls.iter().map(|tc| ToolCallDisplay {
-                    name: tc.name.clone(),
-                    running: tc.status == acp_core::agent::ToolCallStatus::Running,
-                }).collect(),
+                tool_calls: agent
+                    .tool_calls
+                    .iter()
+                    .map(|tc| ToolCallDisplay {
+                        name: tc.name.clone(),
+                        running: tc.status == acp_core::agent::ToolCallStatus::Running,
+                    })
+                    .collect(),
             });
             if agent.streaming && !agent.stream_buf.is_empty() {
                 self.messages
@@ -584,7 +595,13 @@ impl App {
     fn draw(&mut self, frame: &mut Frame) {
         // Compute text area width for input wrapping: total - sidebar - prompt - borders
         let area = frame.area();
-        let sidebar_w: u16 = if area.width > 100 { 24 } else if area.width > 60 { 20 } else { 16 };
+        let sidebar_w: u16 = if area.width > 100 {
+            24
+        } else if area.width > 60 {
+            20
+        } else {
+            16
+        };
         let input_text_w = area.width.saturating_sub(sidebar_w + 3); // 2 for prompt + 1 for border
         let layout = AppLayout::new(area, self.input.visual_line_count(input_text_w));
 
@@ -806,7 +823,10 @@ impl App {
             let name = target.name.clone();
             // When message is from user, prepend context so agent knows to reply directly
             let content = if from == "you" || from == "你" {
-                format!("[来自用户的消息，直接回复即可，不需要 @main]\n{}", target.content)
+                format!(
+                    "[来自用户的消息，直接回复即可，不需要 @main]\n{}",
+                    target.content
+                )
             } else {
                 target.content.clone()
             };
@@ -857,8 +877,14 @@ impl App {
                     // any bus messages that arrive while the agent connects.
                     {
                         let mut ch = self.ctx.channel.lock().await;
-                        ch.post_directed("main", &name, &task,
-                            MessageKind::Task, MessageTransport::MentionRoute, MessageStatus::Delivered);
+                        ch.post_directed(
+                            "main",
+                            &name,
+                            &task,
+                            MessageKind::Task,
+                            MessageTransport::MentionRoute,
+                            MessageStatus::Delivered,
+                        );
                     }
                     let ctx = self.ctx.clone();
                     tokio::spawn(async move {
@@ -1198,12 +1224,7 @@ fn do_prompt_with_reply(
     Box::pin(do_prompt_inner(name, content, ctx, Some(reply_to)))
 }
 
-async fn do_prompt_inner(
-    name: String,
-    content: String,
-    ctx: BusContext,
-    reply_to: Option<String>,
-) {
+async fn do_prompt_inner(name: String, content: String, ctx: BusContext, reply_to: Option<String>) {
     // Scheduler gate: serialize prompts to main agent
     if name == "main" {
         let should_send = {
@@ -1229,6 +1250,7 @@ async fn do_prompt_inner(
             agent.status = AgentStatus::Streaming;
             agent.streaming = true;
             agent.stream_buf.clear();
+            agent.has_bus_activity = false;
             agent.activity = Some("receiving".into());
             agent.current_task = Some(content.chars().take(100).collect());
             // First prompt: inject identity reminder so agent knows who it is
@@ -1271,7 +1293,11 @@ async fn do_prompt_inner(
         Some(c) => c,
         None => {
             let mut ch = ctx.channel.lock().await;
-            ch.post("系统", &format!("{name} 未连接（等待超时），任务已暂存"), true);
+            ch.post(
+                "系统",
+                &format!("{name} 未连接（等待超时），任务已暂存"),
+                true,
+            );
             if let Some(agent) = ch.agents.get_mut(&name) {
                 agent.status = AgentStatus::Idle;
                 agent.streaming = false;
@@ -1369,8 +1395,7 @@ async fn do_prompt_inner(
                             // No pending wait — prompt the sender with the reply
                             let ctx2 = ctx.clone();
                             let sender = sender.clone();
-                            let reply_content =
-                                format!("[来自 {name} 的回复]\n{reply}");
+                            let reply_content = format!("[来自 {name} 的回复]\n{reply}");
                             tokio::spawn(do_prompt(sender, reply_content, ctx2));
                         }
                     } else if reply_to.is_none() {
@@ -1450,8 +1475,16 @@ async fn do_prompt_inner(
                     }
                 }
             } else {
-                let mut ch = ctx.channel.lock().await;
-                ch.post(&name, "(完成，无文本输出)", true);
+                let show_empty = {
+                    let ch = ctx.channel.lock().await;
+                    ch.agents
+                        .get(&name)
+                        .is_none_or(|a| a.should_show_empty_output())
+                };
+                if show_empty {
+                    let mut ch = ctx.channel.lock().await;
+                    ch.post(&name, "(完成，无文本输出)", true);
+                }
             }
             {
                 let mut ch = ctx.channel.lock().await;
@@ -1477,7 +1510,12 @@ async fn do_prompt_inner(
         if let Some(queued) = next {
             let ctx2 = ctx.clone();
             if let Some(reply_to) = queued.reply_to {
-                tokio::spawn(do_prompt_with_reply("main".to_string(), queued.content, ctx2, reply_to));
+                tokio::spawn(do_prompt_with_reply(
+                    "main".to_string(),
+                    queued.content,
+                    ctx2,
+                    reply_to,
+                ));
             } else {
                 tokio::spawn(do_prompt("main".to_string(), queued.content, ctx2));
             }
@@ -1519,11 +1557,7 @@ async fn execute_agent_commands(
                 let adapter_name = parts[2].to_string();
                 // Task = remainder of first line + all continuation lines
                 let first_line_task = if parts.len() >= 4 { parts[3] } else { "" };
-                let continuation: String = trimmed
-                    .lines()
-                    .skip(1)
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let continuation: String = trimmed.lines().skip(1).collect::<Vec<_>>().join("\n");
                 let full_task = if continuation.is_empty() {
                     first_line_task.to_string()
                 } else if first_line_task.is_empty() {
@@ -1553,11 +1587,18 @@ async fn execute_agent_commands(
                     if let Some(task) = task {
                         let ctx2 = ctx.clone();
                         tokio::spawn(async move {
-                            wait_for_agents(std::slice::from_ref(&agent_name), &ctx2.clients, 30).await;
+                            wait_for_agents(std::slice::from_ref(&agent_name), &ctx2.clients, 30)
+                                .await;
                             {
                                 let mut chan = ctx2.channel.lock().await;
-                                chan.post_directed("main", &agent_name, &task,
-                                    MessageKind::Task, MessageTransport::MentionRoute, MessageStatus::Delivered);
+                                chan.post_directed(
+                                    "main",
+                                    &agent_name,
+                                    &task,
+                                    MessageKind::Task,
+                                    MessageTransport::MentionRoute,
+                                    MessageStatus::Delivered,
+                                );
                             }
                             do_prompt(agent_name, task, ctx2).await;
                         });

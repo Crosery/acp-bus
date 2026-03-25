@@ -67,6 +67,8 @@ pub struct Agent {
     pub pending_task: Option<String>,
     /// Short description of the current task being processed (first 100 chars)
     pub current_task: Option<String>,
+    /// Whether this agent made any bus tool calls during current prompt
+    pub has_bus_activity: bool,
 }
 
 impl Agent {
@@ -92,6 +94,7 @@ impl Agent {
             tool_calls: Vec::new(),
             pending_task: None,
             current_task: None,
+            has_bus_activity: false,
         }
     }
 
@@ -117,6 +120,7 @@ impl Agent {
             tool_calls: Vec::new(),
             pending_task: None,
             current_task: None,
+            has_bus_activity: false,
         }
     }
 
@@ -148,5 +152,57 @@ impl Agent {
         self.streaming = false;
         self.stream_buf.clear();
         self.activity = None;
+        self.has_bus_activity = false;
+    }
+
+    /// Whether the "(完成，无文本输出)" message should be shown.
+    /// Returns false if agent produced text output or communicated via bus tools.
+    pub fn should_show_empty_output(&self) -> bool {
+        self.stream_buf.is_empty() && !self.has_bus_activity
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_spawned_has_bus_activity_false() {
+        let agent = Agent::new_spawned("w1".into(), "claude".into(), None);
+        assert!(!agent.has_bus_activity);
+    }
+
+    #[test]
+    fn new_local_has_bus_activity_false() {
+        let agent = Agent::new_local();
+        assert!(!agent.has_bus_activity);
+    }
+
+    #[test]
+    fn reset_stream_clears_bus_activity() {
+        let mut agent = Agent::new_spawned("w1".into(), "claude".into(), None);
+        agent.has_bus_activity = true;
+        agent.reset_stream();
+        assert!(!agent.has_bus_activity);
+    }
+
+    #[test]
+    fn should_show_empty_output_true_when_no_activity() {
+        let agent = Agent::new_spawned("w1".into(), "claude".into(), None);
+        assert!(agent.should_show_empty_output());
+    }
+
+    #[test]
+    fn should_show_empty_output_false_when_has_bus_activity() {
+        let mut agent = Agent::new_spawned("w1".into(), "claude".into(), None);
+        agent.has_bus_activity = true;
+        assert!(!agent.should_show_empty_output());
+    }
+
+    #[test]
+    fn should_show_empty_output_false_when_has_stream_content() {
+        let mut agent = Agent::new_spawned("w1".into(), "claude".into(), None);
+        agent.stream_buf.push_str("some output");
+        assert!(!agent.should_show_empty_output());
     }
 }
