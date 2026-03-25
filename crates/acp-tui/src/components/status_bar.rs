@@ -43,6 +43,38 @@ fn status_char(agent: &AgentDisplay) -> (&'static str, Style) {
     }
 }
 
+/// Return a Chinese status label and its style for display in sidebar.
+fn status_label(agent: &AgentDisplay) -> (String, Style) {
+    if agent.status == "error" {
+        return ("错误".to_string(), Style::default().fg(Color::Red));
+    }
+    if agent.status == "disconnected" {
+        return ("断开".to_string(), Style::default().fg(Color::DarkGray));
+    }
+    if agent.status == "connecting" {
+        return ("连接中".to_string(), Style::default().fg(Color::Yellow));
+    }
+    if let Some(ref target) = agent.waiting_reply_from {
+        return (format!("等待 {target}"), Style::default().fg(Color::Cyan));
+    }
+    match agent.activity.as_deref() {
+        Some("thinking") => (
+            "思考中".to_string(),
+            Style::default().fg(Color::Rgb(120, 100, 160)),
+        ),
+        Some("typing") => ("输出中".to_string(), Style::default().fg(Color::Green)),
+        Some("receiving") => ("就绪".to_string(), Style::default().fg(Color::Yellow)),
+        Some(tool_name) => (
+            tool_name.to_string(),
+            Style::default().fg(Color::Rgb(180, 160, 100)),
+        ),
+        None => (
+            "空闲".to_string(),
+            Style::default().fg(Color::Rgb(80, 90, 110)),
+        ),
+    }
+}
+
 impl Default for StatusBar {
     fn default() -> Self {
         Self::new()
@@ -99,7 +131,9 @@ impl StatusBar {
             spans.push(Span::styled(format!("{icon} "), icon_style));
 
             let name_style = if is_selected {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Rgb(160, 170, 190))
             };
@@ -110,42 +144,22 @@ impl StatusBar {
             buf.set_line(inner.x, y, &Line::from(spans), w);
             y += 1;
 
-            // Timer + current activity (second line, indented)
-            let has_detail = active_for_secs(agent).is_some()
-                || agent.waiting_reply_from.is_some()
-                || agent.tool_calls.iter().any(|tc| tc.running);
-
-            if has_detail && y < max_y {
+            // Status label line (always shown for non-System agents)
+            if agent.name != "System" && y < max_y {
+                let (label, label_style) = status_label(agent);
                 let mut detail = vec![Span::raw("     ")]; // indent
 
+                // Timer (if actively prompting)
                 if let Some(secs) = active_for_secs(agent) {
                     let t = if secs >= 60 {
-                        format!("{}m{}s", secs / 60, secs % 60)
+                        format!("{}m{}s ", secs / 60, secs % 60)
                     } else {
-                        format!("{secs}s")
+                        format!("{secs}s ")
                     };
                     detail.push(Span::styled(t, Style::default().fg(Color::Yellow)));
                 }
 
-                // Show current running tool
-                if let Some(tc) = agent.tool_calls.iter().find(|tc| tc.running) {
-                    let max_tool = (w as usize).saturating_sub(12);
-                    let tool_name: String = tc.name.chars().take(max_tool).collect();
-                    detail.push(Span::styled(
-                        format!(" {tool_name}"),
-                        Style::default().fg(Color::Rgb(180, 160, 100)),
-                    ));
-                }
-
-                // Show waiting target
-                if let Some(ref target) = agent.waiting_reply_from {
-                    let max_t = (w as usize).saturating_sub(10);
-                    let t: String = target.chars().take(max_t).collect();
-                    detail.push(Span::styled(
-                        format!(" →{t}"),
-                        Style::default().fg(Color::Cyan),
-                    ));
-                }
+                detail.push(Span::styled(label, label_style));
 
                 buf.set_line(inner.x, y, &Line::from(detail), w);
                 y += 1;
@@ -153,5 +167,88 @@ impl StatusBar {
 
             // No extra spacing — keep sidebar compact
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_agent(status: &str, activity: Option<&str>, waiting: Option<&str>) -> AgentDisplay {
+        AgentDisplay {
+            name: "test".to_string(),
+            status: status.to_string(),
+            activity: activity.map(|s| s.to_string()),
+            adapter: None,
+            session_id: None,
+            prompt_start_time: None,
+            waiting_reply_from: waiting.map(|s| s.to_string()),
+            waiting_since: None,
+            waiting_conversation_id: None,
+            tool_calls: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn status_label_idle() {
+        let agent = make_agent("idle", None, None);
+        let (label, _) = status_label(&agent);
+        assert_eq!(label, "空闲");
+    }
+
+    #[test]
+    fn status_label_thinking() {
+        let agent = make_agent("streaming", Some("thinking"), None);
+        let (label, _) = status_label(&agent);
+        assert_eq!(label, "思考中");
+    }
+
+    #[test]
+    fn status_label_typing() {
+        let agent = make_agent("streaming", Some("typing"), None);
+        let (label, _) = status_label(&agent);
+        assert_eq!(label, "输出中");
+    }
+
+    #[test]
+    fn status_label_tool() {
+        let agent = make_agent("streaming", Some("Read"), None);
+        let (label, _) = status_label(&agent);
+        assert_eq!(label, "Read");
+    }
+
+    #[test]
+    fn status_label_waiting() {
+        let agent = make_agent("idle", None, Some("bob"));
+        let (label, _) = status_label(&agent);
+        assert_eq!(label, "等待 bob");
+    }
+
+    #[test]
+    fn status_label_connecting() {
+        let agent = make_agent("connecting", None, None);
+        let (label, _) = status_label(&agent);
+        assert_eq!(label, "连接中");
+    }
+
+    #[test]
+    fn status_label_error() {
+        let agent = make_agent("error", None, None);
+        let (label, _) = status_label(&agent);
+        assert_eq!(label, "错误");
+    }
+
+    #[test]
+    fn status_label_disconnected() {
+        let agent = make_agent("disconnected", None, None);
+        let (label, _) = status_label(&agent);
+        assert_eq!(label, "断开");
+    }
+
+    #[test]
+    fn status_label_receiving() {
+        let agent = make_agent("streaming", Some("receiving"), None);
+        let (label, _) = status_label(&agent);
+        assert_eq!(label, "就绪");
     }
 }
