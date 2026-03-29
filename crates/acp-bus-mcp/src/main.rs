@@ -82,7 +82,7 @@ async fn main() {
                             "properties": {
                                 "to": { "type": "string", "description": "Target agent name" },
                                 "content": { "type": "string", "description": "Message content" },
-                                "timeout_secs": { "type": "integer", "description": "Timeout in seconds (default 120, max 300)" }
+                                "timeout_secs": { "type": "integer", "description": "Timeout in seconds (default 300, max 600)" }
                             },
                             "required": ["to", "content"]
                         }
@@ -98,6 +98,47 @@ async fn main() {
                                 "in_reply_to": { "type": "integer", "description": "Original message ID (optional)" }
                             },
                             "required": ["to", "content"]
+                        }
+                    },
+                    {
+                        "name": "bus_create_group",
+                        "description": "Create a discussion group and invite members. Group messages are broadcast to all members.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string", "description": "Group name" },
+                                "members": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Initial member names"
+                                }
+                            },
+                            "required": ["name", "members"]
+                        }
+                    },
+                    {
+                        "name": "bus_group_add",
+                        "description": "Add a member to an existing group.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "group": { "type": "string", "description": "Group name" },
+                                "member": { "type": "string", "description": "Agent name to add" }
+                            },
+                            "required": ["group", "member"]
+                        }
+                    },
+                    {
+                        "name": "bus_group_message",
+                        "description": "Send a message to all members of a group. IMPORTANT: set 'rounds' to control how many discussion rounds happen. Default is 1 (single round). For debates or multi-turn discussions, set rounds=3 or higher.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "group": { "type": "string", "description": "Group name" },
+                                "content": { "type": "string", "description": "Message content" },
+                                "rounds": { "type": "integer", "description": "Number of discussion rounds (1-10, default 3). Each round prompts ALL members sequentially.", "default": 3 }
+                            },
+                            "required": ["group", "content"]
                         }
                     }
                 ]
@@ -150,7 +191,10 @@ async fn call_socket(socket_path: &str, agent_name: &str, tool: &str, args: &Val
         }
         "bus_create_agent" => {
             let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let adapter = args.get("adapter").and_then(|v| v.as_str()).unwrap_or("claude");
+            let adapter = args
+                .get("adapter")
+                .and_then(|v| v.as_str())
+                .unwrap_or("claude");
             let task = args.get("task").and_then(|v| v.as_str());
             let mut req = json!({
                 "type": "create_agent",
@@ -174,7 +218,11 @@ async fn call_socket(socket_path: &str, agent_name: &str, tool: &str, args: &Val
         "bus_send_and_wait" => {
             let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let timeout = args.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(120).min(300);
+            let timeout = args
+                .get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(300)
+                .min(600);
             json!({
                 "type": "send_and_wait",
                 "from": agent_name,
@@ -197,6 +245,46 @@ async fn call_socket(socket_path: &str, agent_name: &str, tool: &str, args: &Val
                 req["in_reply_to"] = json!(id);
             }
             req
+        }
+        "bus_create_group" => {
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let members: Vec<String> = args
+                .get("members")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            json!({
+                "type": "create_group",
+                "from": agent_name,
+                "name": name,
+                "members": members
+            })
+        }
+        "bus_group_add" => {
+            let group = args.get("group").and_then(|v| v.as_str()).unwrap_or("");
+            let member = args.get("member").and_then(|v| v.as_str()).unwrap_or("");
+            json!({
+                "type": "group_add",
+                "from": agent_name,
+                "group": group,
+                "member": member
+            })
+        }
+        "bus_group_message" => {
+            let group = args.get("group").and_then(|v| v.as_str()).unwrap_or("");
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let rounds = args.get("rounds").and_then(|v| v.as_u64()).unwrap_or(3);
+            json!({
+                "type": "group_message",
+                "from": agent_name,
+                "group": group,
+                "content": content,
+                "rounds": rounds
+            })
         }
         _ => return r#"{"error":"unknown tool"}"#.to_string(),
     };

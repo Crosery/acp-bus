@@ -71,6 +71,8 @@ pub struct Agent {
     pub current_task: Option<String>,
     /// Whether this agent made any bus tool calls during current prompt
     pub has_bus_activity: bool,
+    /// Context token usage: (input_tokens, max_context_tokens)
+    pub context_tokens: Option<(u64, u64)>,
 }
 
 impl Agent {
@@ -98,6 +100,7 @@ impl Agent {
             pending_task: None,
             current_task: None,
             has_bus_activity: false,
+            context_tokens: None,
         }
     }
 
@@ -125,11 +128,23 @@ impl Agent {
             pending_task: None,
             current_task: None,
             has_bus_activity: false,
+            context_tokens: None,
         }
     }
 
     pub fn is_alive(&self) -> bool {
         self.alive
+    }
+
+    /// Clean MCP tool name for display: strip `mcp__server__` prefixes.
+    pub fn clean_tool_name(raw: &str) -> String {
+        // Pattern: mcp__<server>__<tool> → just <tool>
+        if let Some(rest) = raw.strip_prefix("mcp__") {
+            if let Some(pos) = rest.find("__") {
+                return rest[pos + 2..].to_string();
+            }
+        }
+        raw.to_string()
     }
 
     pub fn push_tool_call(&mut self, name: String) {
@@ -161,12 +176,21 @@ impl Agent {
         self.thinking_buf.clear();
         self.activity = None;
         self.has_bus_activity = false;
+        self.waiting_reply_from = None;
+        self.waiting_since = None;
+        self.waiting_conversation_id = None;
     }
 
     /// Whether the "(完成，无文本输出)" message should be shown.
     /// Returns false if agent produced text output or communicated via bus tools.
     pub fn should_show_empty_output(&self) -> bool {
         self.stream_buf.is_empty() && !self.has_bus_activity
+    }
+
+    /// Whether auto-reply should be suppressed after prompt completion.
+    /// True when agent already communicated via bus tools (e.g., bus_reply).
+    pub fn should_suppress_auto_reply(&self) -> bool {
+        self.has_bus_activity
     }
 }
 
@@ -226,5 +250,55 @@ mod tests {
         agent.thinking_buf.push_str("some thinking");
         agent.reset_stream();
         assert!(agent.thinking_buf.is_empty());
+    }
+
+    #[test]
+    fn reset_stream_clears_waiting_state() {
+        let mut agent = Agent::new_spawned("w1".into(), "claude".into(), None);
+        agent.waiting_reply_from = Some("bob".into());
+        agent.waiting_since = Some(12345);
+        agent.waiting_conversation_id = Some(42);
+        agent.reset_stream();
+        assert!(agent.waiting_reply_from.is_none());
+        assert!(agent.waiting_since.is_none());
+        assert!(agent.waiting_conversation_id.is_none());
+    }
+
+    #[test]
+    fn clean_tool_name_strips_mcp_prefix() {
+        assert_eq!(
+            Agent::clean_tool_name("mcp__acp-bus__bus_reply"),
+            "bus_reply"
+        );
+        assert_eq!(
+            Agent::clean_tool_name("mcp__acp-bus__bus_send_message"),
+            "bus_send_message"
+        );
+    }
+
+    #[test]
+    fn clean_tool_name_keeps_plain_names() {
+        assert_eq!(Agent::clean_tool_name("Read"), "Read");
+        assert_eq!(Agent::clean_tool_name("Bash"), "Bash");
+    }
+
+    #[test]
+    fn clean_tool_name_handles_single_prefix() {
+        // Only one __, not a full mcp__ prefix
+        assert_eq!(Agent::clean_tool_name("some__tool"), "some__tool");
+    }
+
+    #[test]
+    fn suppress_auto_reply_when_bus_active() {
+        let mut agent = Agent::new_spawned("bob".into(), "claude".into(), None);
+        assert!(!agent.should_suppress_auto_reply());
+        agent.has_bus_activity = true;
+        assert!(agent.should_suppress_auto_reply());
+    }
+
+    #[test]
+    fn no_suppress_when_no_bus_activity() {
+        let agent = Agent::new_spawned("bob".into(), "claude".into(), None);
+        assert!(!agent.should_suppress_auto_reply());
     }
 }

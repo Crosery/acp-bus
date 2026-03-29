@@ -111,6 +111,69 @@ pub async fn save(channel: &Channel) -> anyhow::Result<PathBuf> {
     Ok(filepath)
 }
 
+/// Export channel messages as a human-readable Markdown log.
+pub async fn export_log(channel: &Channel) -> anyhow::Result<PathBuf> {
+    if channel.messages.is_empty() {
+        anyhow::bail!("no messages to export");
+    }
+
+    let mut md = String::new();
+    md.push_str(&format!("# 会话日志 {}\n\n", channel.channel_id));
+    md.push_str(&format!("**工作目录**: `{}`\n\n", channel.cwd));
+
+    // Agent list
+    let agents: Vec<String> = channel
+        .agents
+        .iter()
+        .filter(|(n, _)| *n != "main")
+        .map(|(n, a)| format!("{n} ({})", a.adapter_name))
+        .collect();
+    if !agents.is_empty() {
+        md.push_str(&format!("**Agents**: {}\n\n", agents.join(", ")));
+    }
+    md.push_str("---\n\n");
+
+    for msg in &channel.messages {
+        let ts = chrono::DateTime::from_timestamp(msg.timestamp, 0)
+            .map(|dt| dt.format("%H:%M:%S").to_string())
+            .unwrap_or_default();
+
+        let group_tag = msg
+            .group
+            .as_ref()
+            .map(|g| format!(" [{}]", g))
+            .unwrap_or_default();
+
+        let direction = msg
+            .to
+            .as_ref()
+            .map(|t| format!(" → {t}"))
+            .unwrap_or_default();
+
+        if msg.kind == MessageKind::System || msg.kind == MessageKind::Audit {
+            md.push_str(&format!("*{ts} 系统: {}*\n\n", msg.content));
+        } else {
+            md.push_str(&format!(
+                "**{}{direction}{group_tag}** ({ts})\n\n",
+                msg.from
+            ));
+            // Indent content for readability
+            for line in msg.content.lines() {
+                md.push_str(&format!("{line}\n"));
+            }
+            md.push('\n');
+        }
+    }
+
+    let dir = storage_dir(&channel.cwd);
+    tokio::fs::create_dir_all(&dir).await?;
+    let filepath = dir.join(format!("{}.md", channel.channel_id));
+    tokio::fs::write(&filepath, md).await?;
+
+    info!(path = %filepath.display(), "log exported");
+    Ok(filepath)
+}
+
 /// List saved snapshots for a given cwd (newest first).
 pub async fn list_snapshots(cwd: &str) -> anyhow::Result<Vec<SnapshotInfo>> {
     let dir = storage_dir(cwd);
@@ -202,6 +265,8 @@ impl From<&SnapshotMessage> for Message {
             },
             error: None,
             timestamp: m.timestamp,
+            system_kind: None,
+            group: None,
         }
     }
 }

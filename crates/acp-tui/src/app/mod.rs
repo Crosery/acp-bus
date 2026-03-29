@@ -467,7 +467,15 @@ impl App {
                     self.handle_input(text, images).await;
                 }
             }
-            (_, KeyCode::Backspace) => self.input.backspace(),
+            (_, KeyCode::Backspace) => {
+                if let Some(idx) = self.input.backspace() {
+                    let i = idx.saturating_sub(1);
+                    if i < self.pending_images.images.len() {
+                        self.pending_images.images.remove(i);
+                        self.renumber_image_markers();
+                    }
+                }
+            }
             (_, KeyCode::Delete) => self.input.delete(),
             (_, KeyCode::Home) => self.input.move_home(),
             (_, KeyCode::End) => self.input.move_end(),
@@ -586,6 +594,35 @@ impl App {
 
     /// Try to read image from system clipboard, append to pending list,
     /// and insert `[Image-N]` marker in the input box.
+    /// After removing a pending image, renumber all `[Image-N]` markers
+    /// in the input text to stay sequential (1, 2, 3...).
+    fn renumber_image_markers(&mut self) {
+        let mut result = String::new();
+        let mut counter = 1usize;
+        let mut rest = self.input.text.as_str();
+        while let Some(start) = rest.find("[Image-") {
+            result.push_str(&rest[..start]);
+            if let Some(end) = rest[start..].find(']') {
+                // Verify it's a valid marker
+                let inner = &rest[start + 7..start + end];
+                if inner.parse::<usize>().is_ok() {
+                    result.push_str(&format!("[Image-{counter}]"));
+                    counter += 1;
+                    rest = &rest[start + end + 1..];
+                } else {
+                    result.push_str(&rest[start..start + end + 1]);
+                    rest = &rest[start + end + 1..];
+                }
+            } else {
+                result.push_str(&rest[start..]);
+                rest = "";
+            }
+        }
+        result.push_str(rest);
+        self.input.cursor_pos = self.input.cursor_pos.min(result.len());
+        self.input.text = result;
+    }
+
     async fn try_paste_image(&mut self) {
         let image = clipboard::read_clipboard_image().await;
         match image {

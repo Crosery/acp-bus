@@ -60,10 +60,15 @@ async fn mcp_call_socket(
         }
         "bus_create_agent" => {
             let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let adapter = args.get("adapter").and_then(|v| v.as_str()).unwrap_or("claude");
+            let adapter = args
+                .get("adapter")
+                .and_then(|v| v.as_str())
+                .unwrap_or("claude");
             let task = args.get("task").and_then(|v| v.as_str());
             let mut req = serde_json::json!({ "type": "create_agent", "from": agent_name, "name": name, "adapter": adapter });
-            if let Some(task) = task { req["task"] = serde_json::json!(task); }
+            if let Some(task) = task {
+                req["task"] = serde_json::json!(task);
+            }
             req
         }
         "bus_remove_agent" => {
@@ -73,7 +78,11 @@ async fn mcp_call_socket(
         "bus_send_and_wait" => {
             let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let timeout = args.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(120).min(300);
+            let timeout = args
+                .get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(120)
+                .min(300);
             serde_json::json!({ "type": "send_and_wait", "from": agent_name, "to": to, "content": content, "timeout_secs": timeout })
         }
         "bus_reply" => {
@@ -81,8 +90,28 @@ async fn mcp_call_socket(
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let in_reply_to = args.get("in_reply_to").and_then(|v| v.as_u64());
             let mut req = serde_json::json!({ "type": "reply", "from": agent_name, "to": to, "content": content });
-            if let Some(id) = in_reply_to { req["in_reply_to"] = serde_json::json!(id); }
+            if let Some(id) = in_reply_to {
+                req["in_reply_to"] = serde_json::json!(id);
+            }
             req
+        }
+        "bus_create_group" => {
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let members: Vec<String> = args
+                .get("members")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            serde_json::json!({ "type": "create_group", "from": agent_name, "name": name, "members": members })
+        }
+        "bus_group_message" => {
+            let group = args.get("group").and_then(|v| v.as_str()).unwrap_or("");
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            serde_json::json!({ "type": "group_message", "from": agent_name, "group": group, "content": content })
         }
         _ => return r#"{"error":"unknown tool"}"#.to_string(),
     };
@@ -130,6 +159,14 @@ async fn main() -> anyhow::Result<()> {
                 crossterm::event::EnableBracketedPaste,
                 crossterm::event::EnableMouseCapture,
             )?;
+            // Enable keyboard enhancement for terminals that support it (Kitty, WezTerm, etc.)
+            // This allows distinguishing Ctrl+Enter from Enter.
+            let _ = crossterm::execute!(
+                stdout,
+                crossterm::event::PushKeyboardEnhancementFlags(
+                    crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                )
+            );
             let backend = ratatui::backend::CrosstermBackend::new(stdout);
             let mut terminal = ratatui::Terminal::new(backend)?;
 
@@ -138,6 +175,10 @@ async fn main() -> anyhow::Result<()> {
 
             // Restore terminal
             crossterm::terminal::disable_raw_mode()?;
+            let _ = crossterm::execute!(
+                terminal.backend_mut(),
+                crossterm::event::PopKeyboardEnhancementFlags
+            );
             crossterm::execute!(
                 terminal.backend_mut(),
                 crossterm::terminal::LeaveAlternateScreen,
@@ -156,8 +197,8 @@ async fn main() -> anyhow::Result<()> {
             acp_server::serve_stdio(cwd).await?;
         }
         Commands::McpServer => {
-            use std::io::Write;
             use serde_json::json;
+            use std::io::Write;
             use tokio::io::{AsyncBufReadExt, BufReader};
 
             let socket_path = std::env::var("ACP_BUS_SOCKET").unwrap_or_default();
@@ -251,13 +292,40 @@ async fn main() -> anyhow::Result<()> {
                                     },
                                     "required": ["to", "content"]
                                 }
+                            },
+                            {
+                                "name": "bus_create_group",
+                                "description": "Create a discussion group and invite members. Group messages are broadcast to all members.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": { "type": "string", "description": "Group name" },
+                                        "members": {
+                                            "type": "array",
+                                            "items": { "type": "string" },
+                                            "description": "Initial member names"
+                                        }
+                                    },
+                                    "required": ["name", "members"]
+                                }
+                            },
+                            {
+                                "name": "bus_group_message",
+                                "description": "Send a message to all members of a group.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "group": { "type": "string", "description": "Group name" },
+                                        "content": { "type": "string", "description": "Message content" }
+                                    },
+                                    "required": ["group", "content"]
+                                }
                             }
                         ]
                     }),
                     "tools/call" => {
                         let params = msg.get("params").cloned().unwrap_or(json!({}));
-                        let tool_name =
-                            params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
                         let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
                         let resp =

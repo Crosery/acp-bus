@@ -104,16 +104,18 @@ async fn handle_line(line: &str, bus_tx: &mpsc::UnboundedSender<BusEvent>) -> St
                 Ok(Ok(agents)) => {
                     let list: Vec<serde_json::Value> = agents
                         .iter()
-                        .map(|a| serde_json::json!({
-                            "name": a.name,
-                            "status": a.status,
-                            "adapter": a.adapter,
-                            "activity": a.activity,
-                            "activeSecs": a.active_secs,
-                            "currentTask": a.current_task,
-                            "inboxDepth": a.inbox_depth,
-                            "waitingFor": a.waiting_for,
-                        }))
+                        .map(|a| {
+                            serde_json::json!({
+                                "name": a.name,
+                                "status": a.status,
+                                "adapter": a.adapter,
+                                "activity": a.activity,
+                                "activeSecs": a.active_secs,
+                                "currentTask": a.current_task,
+                                "inboxDepth": a.inbox_depth,
+                                "waitingFor": a.waiting_for,
+                            })
+                        })
                         .collect();
                     serde_json::json!({"agents": list}).to_string()
                 }
@@ -122,10 +124,19 @@ async fn handle_line(line: &str, bus_tx: &mpsc::UnboundedSender<BusEvent>) -> St
         }
         "create_agent" => {
             let (reply_tx, reply_rx) = oneshot::channel();
-            let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let from = msg
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             let name = msg.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let adapter = msg.get("adapter").and_then(|v| v.as_str()).unwrap_or("claude");
-            let task = msg.get("task").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let adapter = msg
+                .get("adapter")
+                .and_then(|v| v.as_str())
+                .unwrap_or("claude");
+            let task = msg
+                .get("task")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let _ = bus_tx.send(BusEvent::CreateAgent {
                 from_agent: from.to_string(),
                 name: name.to_string(),
@@ -137,13 +148,17 @@ async fn handle_line(line: &str, bus_tx: &mpsc::UnboundedSender<BusEvent>) -> St
                 Ok(Ok(result)) => serde_json::json!({
                     "ok": result.ok,
                     "error": result.error,
-                }).to_string(),
+                })
+                .to_string(),
                 _ => r#"{"error":"timeout"}"#.to_string(),
             }
         }
         "remove_agent" => {
             let (reply_tx, reply_rx) = oneshot::channel();
-            let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let from = msg
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             let name = msg.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let _ = bus_tx.send(BusEvent::RemoveAgent {
                 from_agent: from.to_string(),
@@ -154,16 +169,23 @@ async fn handle_line(line: &str, bus_tx: &mpsc::UnboundedSender<BusEvent>) -> St
                 Ok(Ok(result)) => serde_json::json!({
                     "ok": result.ok,
                     "error": result.error,
-                }).to_string(),
+                })
+                .to_string(),
                 _ => r#"{"error":"timeout"}"#.to_string(),
             }
         }
         "send_and_wait" => {
             let (reply_tx, reply_rx) = oneshot::channel();
-            let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let from = msg
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             let to = msg.get("to").and_then(|v| v.as_str()).unwrap_or("");
             let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let timeout_secs = msg.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(120);
+            let timeout_secs = msg
+                .get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(300);
             let _ = bus_tx.send(BusEvent::SendAndWait {
                 from_agent: from.to_string(),
                 to_agent: to.to_string(),
@@ -179,13 +201,17 @@ async fn handle_line(line: &str, bus_tx: &mpsc::UnboundedSender<BusEvent>) -> St
                     "reply": result.reply_content,
                     "from": result.from_agent,
                     "error": result.error,
-                }).to_string(),
+                })
+                .to_string(),
                 _ => r#"{"error":"timeout"}"#.to_string(),
             }
         }
         "reply" => {
             let (reply_tx, reply_rx) = oneshot::channel();
-            let from = msg.get("from").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let from = msg
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             let to = msg.get("to").and_then(|v| v.as_str()).unwrap_or("");
             let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let in_reply_to = msg.get("in_reply_to").and_then(|v| v.as_u64());
@@ -201,7 +227,90 @@ async fn handle_line(line: &str, bus_tx: &mpsc::UnboundedSender<BusEvent>) -> St
                     "ok": result.delivered,
                     "messageId": result.message_id,
                     "error": result.error,
-                }).to_string(),
+                })
+                .to_string(),
+                _ => r#"{"error":"timeout"}"#.to_string(),
+            }
+        }
+        "create_group" => {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            let from = msg
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let name = msg.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let members: Vec<String> = msg
+                .get("members")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let _ = bus_tx.send(BusEvent::CreateGroup {
+                from_agent: from.to_string(),
+                name: name.to_string(),
+                members,
+                reply_tx,
+            });
+            match tokio::time::timeout(std::time::Duration::from_secs(5), reply_rx).await {
+                Ok(Ok(result)) => serde_json::json!({
+                    "ok": result.delivered,
+                    "error": result.error,
+                })
+                .to_string(),
+                _ => r#"{"error":"timeout"}"#.to_string(),
+            }
+        }
+        "group_message" => {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            let from = msg
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let group = msg.get("group").and_then(|v| v.as_str()).unwrap_or("");
+            let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let rounds = msg
+                .get("rounds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3) as u32;
+            let _ = bus_tx.send(BusEvent::GroupMessage {
+                from_agent: from.to_string(),
+                group_name: group.to_string(),
+                content: content.to_string(),
+                rounds,
+                reply_tx,
+            });
+            match tokio::time::timeout(std::time::Duration::from_secs(5), reply_rx).await {
+                Ok(Ok(result)) => serde_json::json!({
+                    "ok": result.delivered,
+                    "error": result.error,
+                })
+                .to_string(),
+                _ => r#"{"error":"timeout"}"#.to_string(),
+            }
+        }
+        "group_add" => {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            let from = msg
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let group = msg.get("group").and_then(|v| v.as_str()).unwrap_or("");
+            let member = msg.get("member").and_then(|v| v.as_str()).unwrap_or("");
+            let _ = bus_tx.send(BusEvent::GroupAdd {
+                from_agent: from.to_string(),
+                group_name: group.to_string(),
+                member: member.to_string(),
+                reply_tx,
+            });
+            match tokio::time::timeout(std::time::Duration::from_secs(5), reply_rx).await {
+                Ok(Ok(result)) => serde_json::json!({
+                    "ok": result.delivered,
+                    "error": result.error,
+                })
+                .to_string(),
                 _ => r#"{"error":"timeout"}"#.to_string(),
             }
         }

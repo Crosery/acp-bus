@@ -1,11 +1,16 @@
 pub mod adapter;
 pub mod agent;
 pub mod bus_socket;
+pub mod bus_types;
 pub mod channel;
 pub mod client;
 pub mod comm_log;
+pub mod fair_scheduler;
+pub mod group;
+pub mod pending_tasks;
 pub mod process;
 pub mod registry;
+pub(crate) mod reverse_request;
 pub mod router;
 pub mod scheduler;
 pub mod store;

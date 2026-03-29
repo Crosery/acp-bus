@@ -45,7 +45,10 @@ impl ContentBlock {
                 if let Some(text) = &resource.text {
                     Some(text.clone())
                 } else {
-                    resource.uri.as_ref().map(|uri| format!("[resource: {uri}]"))
+                    resource
+                        .uri
+                        .as_ref()
+                        .map(|uri| format!("[resource: {uri}]"))
                 }
             }
             ContentBlock::Image { .. } => Some("[image]".to_string()),

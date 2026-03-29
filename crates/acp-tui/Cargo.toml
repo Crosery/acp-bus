@@ -17,3 +17,7 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 futures = "0.3"
 regex = "1"
 unicode-width = "0.2"
+tui-markdown = "=0.3.6"
+arboard = { version = "3", features = ["image-data"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"

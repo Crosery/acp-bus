@@ -1,122 +1,124 @@
-//! Centralized English UI strings for the TUI.
+//! Centralized UI strings for the TUI.
 //!
 //! All user-facing text lives here so that:
 //! 1. Strings are easy to find and update in one place.
 //! 2. A future locale system only needs to swap this module.
+//!
+//! NOTE: UI strings are in Chinese. Agent prompts (sent to LLM) are in English.
 
 // === Agent Status Labels ===
 
-pub const STATUS_IDLE: &str = "Idle";
-pub const STATUS_THINKING: &str = "Thinking";
-pub const STATUS_TYPING: &str = "Typing";
-pub const STATUS_READY: &str = "Ready";
-pub const STATUS_CONNECTING: &str = "Connecting";
-pub const STATUS_ERROR: &str = "Error";
-pub const STATUS_DISCONNECTED: &str = "Disconnected";
+pub const STATUS_IDLE: &str = "空闲";
+pub const STATUS_THINKING: &str = "思考中";
+pub const STATUS_TYPING: &str = "输出中";
+pub const STATUS_READY: &str = "就绪";
+pub const STATUS_CONNECTING: &str = "连接中";
+pub const STATUS_ERROR: &str = "错误";
+pub const STATUS_DISCONNECTED: &str = "断开";
 
 pub fn status_waiting(target: &str) -> String {
-    format!("Waiting {target}")
+    format!("等待 {target}")
 }
 
 // === Sidebar Tab Labels ===
 
-pub const TAB_DM: &str = " DM ";
-pub const TAB_GROUPS: &str = " Groups ";
+pub const TAB_DM: &str = " 私聊 ";
+pub const TAB_GROUPS: &str = " 群组 ";
 
 // === Sidebar Hints ===
 
 pub const SIDEBAR_HINTS: &[(&str, &str)] = &[
-    ("^C", "Quit"),
-    ("^Q", "Cancel"),
-    ("^B", "Sidebar"),
-    ("Tab", "DM/Groups"),
-    ("^N/P", "Switch"),
-    ("^J/K", "Scroll"),
-    ("^D/U", "Page"),
-    ("Enter", "Send"),
-    ("^Enter", "Newline"),
-    ("^V", "Paste img"),
+    ("^C", "退出"),
+    ("^Q", "取消任务"),
+    ("^B", "收起侧栏"),
+    ("Tab", "私聊/群组"),
+    ("^N/P", "切换/选择"),
+    ("^J/K", "滚动"),
+    ("^D/U", "翻页"),
+    ("Enter", "发送/确认"),
+    ("^Enter", "换行"),
+    ("^V", "粘贴图片"),
 ];
 
 // === Sidebar Groups ===
 
-pub const NO_GROUPS: &str = "No groups";
+pub const NO_GROUPS: &str = "无群组";
 pub const NO_GROUPS_HINT: &str = "/group create";
 
 // === Input Placeholders ===
 
 pub fn placeholder_agent(name: &str) -> String {
-    format!("Send to {name}... (Enter send, @agent route, /help)")
+    format!("发送给 {name}… (Enter 发送, @agent 路由, /help)")
 }
 
-pub const PLACEHOLDER_SYSTEM: &str = "Type a message... (Tab complete, @agent route, /add /help)";
+pub const PLACEHOLDER_SYSTEM: &str = "输入消息… (@agent 路由, /add /help)";
 
 // === Input Status Labels (reused in input box) ===
 
-pub const INPUT_STATUS_THINKING: &str = "Thinking";
-pub const INPUT_STATUS_TYPING: &str = "Typing";
-pub const INPUT_STATUS_CONNECTING: &str = "Connecting";
-pub const INPUT_STATUS_ERROR: &str = "Error";
-pub const INPUT_STATUS_IDLE: &str = "Idle";
+pub const INPUT_STATUS_THINKING: &str = "思考中";
+pub const INPUT_STATUS_TYPING: &str = "输出中";
+pub const INPUT_STATUS_CONNECTING: &str = "连接中";
+pub const INPUT_STATUS_ERROR: &str = "错误";
+pub const INPUT_STATUS_IDLE: &str = "空闲";
 
 // === Command Descriptions (autocomplete popup) ===
 
-pub const CMD_ADD: &str = "Add agent";
-pub const CMD_REMOVE: &str = "Remove agent";
-pub const CMD_LIST: &str = "List agents";
-pub const CMD_ADAPTERS: &str = "Adapters";
-pub const CMD_CANCEL: &str = "Cancel task";
-pub const CMD_GROUP: &str = "Group mgmt";
-pub const CMD_SAVE: &str = "Save snapshot";
-pub const CMD_HELP: &str = "Help";
-pub const CMD_QUIT: &str = "Quit";
+pub const CMD_ADD: &str = "添加 agent";
+pub const CMD_REMOVE: &str = "移除 agent";
+pub const CMD_LIST: &str = "列出 agents";
+pub const CMD_ADAPTERS: &str = "可用 adapters";
+pub const CMD_CANCEL: &str = "取消任务";
+pub const CMD_GROUP: &str = "群组管理";
+pub const CMD_SAVE: &str = "保存快照";
+pub const CMD_HELP: &str = "帮助";
+pub const CMD_QUIT: &str = "退出";
 
 // === System Messages (lifecycle) ===
 
 pub fn sys_adapter_error(err: &str) -> String {
-    format!("adapter error: {err}")
+    format!("adapter 错误: {err}")
 }
 
 pub fn sys_connecting(name: &str) -> String {
-    format!("{name} connecting...")
+    format!("{name} 正在连接…")
 }
 
 pub fn sys_online(name: &str, adapter: &str) -> String {
-    format!("{name} ({adapter}) online")
+    format!("{name} ({adapter}) 已上线")
 }
 
 pub fn sys_connect_failed(name: &str, err: &str) -> String {
-    format!("{name} connection failed: {err}")
+    format!("{name} 连接失败: {err}")
 }
 
 pub fn sys_abnormal_exit(name: &str, code: Option<i32>) -> String {
-    format!("{name} abnormal exit (code={code:?})")
+    format!("{name} 异常退出 (code={code:?})")
 }
 
 pub fn sys_normal_exit(name: &str, code: Option<i32>) -> String {
-    format!("{name} exited (code={code:?})")
+    format!("{name} 退出 (code={code:?})")
 }
 
-pub const SYS_SENDER_SYSTEM: &str = "System";
+pub const SYS_SENDER_SYSTEM: &str = "系统";
 
 // === System Messages (prompting / queue) ===
 
 pub fn sys_agent_complete(name: &str) -> String {
-    format!("{name} completed")
+    format!("{name} 已完成")
 }
 
 pub fn sys_agent_error(name: &str, err: &str) -> String {
-    format!("{name} error: {err}")
+    format!("{name} 出错: {err}")
 }
 
 pub fn sys_all_main_busy(max: usize, depth: usize) -> String {
     format!(
-        "All main instances busy ({max}/{max}), message queued (queue: {depth})"
+        "所有 main 实例忙碌中（{max}/{max}），消息已排队（队列: {depth}）"
     )
 }
 
 pub fn sys_agent_not_connected(name: &str) -> String {
-    format!("{name} not connected (timeout), task saved")
+    format!("{name} 未连接（等待超时），任务已暂存")
 }
 
 pub fn sys_image_pasted(path: &str) -> String {
@@ -130,72 +132,71 @@ pub fn sys_image_pasted_with_text(path: &str) -> String {
 // === Group Messages (bus_events) ===
 
 pub fn err_group_exists(name: &str) -> String {
-    format!("group {name} already exists")
+    format!("群组 {name} 已存在")
 }
 
-pub const ERR_GROUP_NO_MEMBERS: &str = "group not found or no other members";
+pub const ERR_GROUP_NO_MEMBERS: &str = "群组不存在或无其他成员";
 
 pub fn err_group_not_found(name: &str) -> String {
-    format!("group {name} not found")
+    format!("群组 {name} 不存在")
 }
 
 pub fn err_agent_not_found(name: &str) -> String {
-    format!("agent {name} not found")
+    format!("agent {name} 不存在")
 }
 
 pub fn sys_member_joined_group(member: &str, group: &str) -> String {
-    format!("{member} joined group [{group}]")
+    format!("{member} 已加入群组 [{group}]")
 }
 
 pub fn err_member_already_in_group(member: &str) -> String {
-    format!("{member} already in group")
+    format!("{member} 已在群组中")
 }
 
 // === Group Display (status bar format) ===
 
 pub fn group_label(name: &str) -> String {
-    format!("Group {name}")
+    format!("群组 {name}")
 }
 
 // === Command Messages ===
 
 pub const CMD_ADD_USAGE: &str =
-    "Usage: /add <name> <adapter>\nAvailable adapters: claude, c1, c2, gemini, codex";
-pub const CMD_REMOVE_USAGE: &str = "Usage: /remove <name>";
-pub const CMD_CANCEL_USAGE: &str = "Usage: /cancel <name>";
-pub const CMD_CANNOT_REMOVE_MAIN: &str = "Cannot remove main agent";
-pub const CMD_NO_AGENTS: &str = "No agents";
+    "用法: /add <name> <adapter>\n可用 adapters: claude, c1, c2, gemini, codex";
+pub const CMD_REMOVE_USAGE: &str = "用法: /remove <name>";
+pub const CMD_CANCEL_USAGE: &str = "用法: /cancel <name>";
+pub const CMD_CANNOT_REMOVE_MAIN: &str = "无法移除 main agent";
+pub const CMD_NO_AGENTS: &str = "无 agents";
 
 pub fn cmd_cancelled(name: &str) -> String {
-    format!("Cancelled {name}")
+    format!("已取消 {name}")
 }
 
 pub fn cmd_not_found(name: &str) -> String {
-    format!("{name} not found")
+    format!("{name} 未找到")
 }
 
 pub fn cmd_saved(path: &str) -> String {
-    format!("Saved: {path}")
+    format!("已保存: {path}")
 }
 
 pub fn cmd_save_failed(err: &str) -> String {
-    format!("Save failed: {err}")
+    format!("保存失败: {err}")
 }
 
 pub const CMD_HELP_TEXT: &str = "\
-/add <name> <adapter>  Add agent\n\
-/remove <name>         Remove agent\n\
-/list                  List agents\n\
-/adapters              List adapters\n\
-/cancel <name>         Cancel task\n\
-/save                  Save channel snapshot\n\
-/quit                  Quit\n\
-Use @name in message to route to agent\n\
-Messages without @mention go to main\n\
-Tab to complete commands and @agent";
+/add <name> <adapter>  添加 agent\n\
+/remove <name>         移除 agent\n\
+/list                  列出 agents\n\
+/adapters              列出可用 adapters\n\
+/cancel <name>         取消当前任务\n\
+/save                  保存频道快照\n\
+/quit                  退出\n\
+消息中用 @name 路由到指定 agent\n\
+无 @mention 的消息默认发给 main";
 
 pub fn cmd_unknown(cmd: &str) -> String {
-    format!("Unknown command: {cmd}, /help for help")
+    format!("未知命令: {cmd}，输入 /help 查看帮助")
 }
 
 pub const CMD_GROUP_USAGE: &str = "\
@@ -203,47 +204,47 @@ pub const CMD_GROUP_USAGE: &str = "\
 /group add <name> <member>\n\
 /group list\n\
 /group remove <name> <member>";
-pub const CMD_GROUP_CREATE_USAGE: &str = "Usage: /group create <name> <members...>";
-pub const CMD_GROUP_ADD_USAGE: &str = "Usage: /group add <name> <member>";
-pub const CMD_GROUP_REMOVE_USAGE: &str = "Usage: /group remove <name> <member>";
-pub const CMD_NO_GROUPS: &str = "No groups";
-pub const CMD_GROUP_UNKNOWN_SUB: &str = "Unknown subcommand, use /group for help";
+pub const CMD_GROUP_CREATE_USAGE: &str = "用法: /group create <name> <members...>";
+pub const CMD_GROUP_ADD_USAGE: &str = "用法: /group add <name> <member>";
+pub const CMD_GROUP_REMOVE_USAGE: &str = "用法: /group remove <name> <member>";
+pub const CMD_NO_GROUPS: &str = "无群组";
+pub const CMD_GROUP_UNKNOWN_SUB: &str = "未知子命令，输入 /group 查看帮助";
 
 pub fn cmd_group_created(name: &str, members: &str) -> String {
-    format!("Group [{name}] members: {members}")
+    format!("群组 [{name}] 成员: {members}")
 }
 
 pub fn cmd_group_exists(name: &str) -> String {
-    format!("Group {name} already exists")
+    format!("群组 {name} 已存在")
 }
 
 pub fn cmd_member_joined(member: &str, group: &str) -> String {
-    format!("{member} joined group [{group}]")
+    format!("{member} 已加入群组 [{group}]")
 }
 
 pub fn cmd_group_not_found(name: &str) -> String {
-    format!("Group {name} not found")
+    format!("群组 {name} 不存在")
 }
 
 pub fn cmd_member_left(member: &str, group: &str) -> String {
-    format!("{member} left group [{group}]")
+    format!("{member} 已退出群组 [{group}]")
 }
 
 pub fn cmd_cannot_remove_creator(member: &str) -> String {
-    format!("Cannot remove {member} (creator cannot leave)")
+    format!("无法移除 {member}（创建者不能退出）")
 }
 
 // === Cancel / Interrupt Messages (mod.rs) ===
 
 pub fn sys_interrupted_agents(names: &str) -> String {
-    format!("Interrupted: {names}")
+    format!("已中断: {names}")
 }
 
 pub fn sys_interrupted(name: &str) -> String {
-    format!("Interrupted {name}")
+    format!("已中断 {name}")
 }
 
-pub const SYS_CLIPBOARD_NO_IMAGE: &str = "No image found in clipboard";
+pub const SYS_CLIPBOARD_NO_IMAGE: &str = "剪贴板中未找到图片";
 
 #[cfg(test)]
 mod tests {
@@ -266,7 +267,7 @@ mod tests {
     fn status_waiting_includes_target() {
         let result = status_waiting("bob");
         assert!(result.contains("bob"));
-        assert!(result.contains("Waiting"));
+        assert!(result.contains("等待"));
     }
 
     // --- Sidebar ---
@@ -343,7 +344,7 @@ mod tests {
     fn sys_connecting_includes_name() {
         let result = sys_connecting("main");
         assert!(result.contains("main"));
-        assert!(result.contains("connecting"));
+        assert!(result.contains("连接"));
     }
 
     #[test]
@@ -351,7 +352,7 @@ mod tests {
         let result = sys_online("main-2", "claude");
         assert!(result.contains("main-2"));
         assert!(result.contains("claude"));
-        assert!(result.contains("online"));
+        assert!(result.contains("上线"));
     }
 
     #[test]
@@ -365,11 +366,11 @@ mod tests {
     fn sys_exit_messages() {
         let abnormal = sys_abnormal_exit("w1", Some(1));
         assert!(abnormal.contains("w1"));
-        assert!(abnormal.contains("abnormal"));
+        assert!(abnormal.contains("异常"));
 
         let normal = sys_normal_exit("main", Some(0));
         assert!(normal.contains("main"));
-        assert!(normal.contains("exited"));
+        assert!(normal.contains("退出"));
     }
 
     // --- System Messages (prompting) ---
@@ -378,7 +379,7 @@ mod tests {
     fn sys_agent_complete_includes_name() {
         let result = sys_agent_complete("worker");
         assert!(result.contains("worker"));
-        assert!(result.contains("completed"));
+        assert!(result.contains("已完成"));
     }
 
     #[test]
@@ -393,14 +394,14 @@ mod tests {
         let result = sys_all_main_busy(5, 3);
         assert!(result.contains("5/5"));
         assert!(result.contains("3"));
-        assert!(result.contains("queue"));
+        assert!(result.contains("队列"));
     }
 
     #[test]
     fn sys_agent_not_connected_includes_name() {
         let result = sys_agent_not_connected("main");
         assert!(result.contains("main"));
-        assert!(result.contains("not connected"));
+        assert!(result.contains("未连接"));
     }
 
     // --- Group Messages ---
@@ -409,7 +410,7 @@ mod tests {
     fn err_group_exists_includes_name() {
         let result = err_group_exists("dev-team");
         assert!(result.contains("dev-team"));
-        assert!(result.contains("already exists"));
+        assert!(result.contains("已存在"));
     }
 
     #[test]
@@ -434,14 +435,14 @@ mod tests {
         let result = sys_member_joined_group("bob", "team");
         assert!(result.contains("bob"));
         assert!(result.contains("team"));
-        assert!(result.contains("joined"));
+        assert!(result.contains("加入"));
     }
 
     #[test]
     fn err_member_already_in_group_includes_name() {
         let result = err_member_already_in_group("alice");
         assert!(result.contains("alice"));
-        assert!(result.contains("already"));
+        assert!(result.contains("已在"));
     }
 
     // --- Group Display ---
@@ -449,7 +450,7 @@ mod tests {
     #[test]
     fn group_label_includes_name() {
         let result = group_label("dev");
-        assert!(result.contains("Group"));
+        assert!(result.contains("群组"));
         assert!(result.contains("dev"));
     }
 
@@ -479,11 +480,11 @@ mod tests {
         assert!(cmd_save_failed("io error").contains("io error"));
         assert!(cmd_unknown("/foo").contains("/foo"));
         assert!(cmd_group_created("team", "a, b").contains("team"));
-        assert!(cmd_group_exists("team").contains("already exists"));
+        assert!(cmd_group_exists("team").contains("已存在"));
         assert!(cmd_member_joined("bob", "team").contains("bob"));
-        assert!(cmd_group_not_found("team").contains("not found"));
-        assert!(cmd_member_left("bob", "team").contains("left"));
-        assert!(cmd_cannot_remove_creator("alice").contains("creator"));
+        assert!(cmd_group_not_found("team").contains("不存在"));
+        assert!(cmd_member_left("bob", "team").contains("退出"));
+        assert!(cmd_cannot_remove_creator("alice").contains("创建者"));
     }
 
     // --- Cancel / Interrupt ---
@@ -492,11 +493,11 @@ mod tests {
     fn sys_interrupted_messages() {
         let multi = sys_interrupted_agents("w1, w2");
         assert!(multi.contains("w1, w2"));
-        assert!(multi.contains("Interrupted"));
+        assert!(multi.contains("中断"));
 
         let single = sys_interrupted("main");
         assert!(single.contains("main"));
-        assert!(single.contains("Interrupted"));
+        assert!(single.contains("中断"));
     }
 
     #[test]

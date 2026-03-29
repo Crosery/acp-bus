@@ -53,8 +53,11 @@ impl Scheduler {
                 return Err(format!("main 队列已满（{MAX_MAIN_QUEUE}），消息被丢弃"));
             }
             info!(msg_len = content.len(), "queuing message for main");
-            self.main_queue
-                .push_back(QueuedMessage { content, from, reply_to });
+            self.main_queue.push_back(QueuedMessage {
+                content,
+                from,
+                reply_to,
+            });
             return Ok(false);
         }
         self.main_busy = true;
@@ -137,7 +140,8 @@ mod tests {
         let mut s = Scheduler::new();
         s.push_to_main("first".into(), None).unwrap();
         // Message without reply_to (user prompt)
-        s.push_to_main_with_reply("user msg".into(), None, None).unwrap();
+        s.push_to_main_with_reply("user msg".into(), None, None)
+            .unwrap();
         let next = s.main_done().unwrap();
         assert_eq!(next.reply_to, None);
     }
