@@ -1,14 +1,253 @@
 # acp-bus
 
-多 AI Agent 协作总线 — 让 AI 组团干活。
+Multi-AI Agent collaboration bus — make AIs work as a team.
+
+**English | [中文](README_CN.md)**
+
+## Overview
+
+acp-bus is a multi-agent collaboration system based on ACP (Agent Communication Protocol). Through a TUI interface, users can orchestrate multiple AI agents to work in parallel, communicate with each other, and collaborate autonomously — like managing a team.
+
+### Core Concept
+
+**Not making one AI stronger, but making multiple AIs collaborate like a team.**
+
+- **Main Agent = Team Lead**: Understands requirements, breaks down tasks, assembles the team, ensures quality
+- **Worker Agent = Full-stack Engineer**: Has complete toolchain, can use subagents, superpowers skills, and team communication
+- **Bus = Communication Hub**: Agents communicate directly via `bus_send_message` peer-to-peer, without routing through Main
+
+## Installation
+
+### Prerequisites
+
+- **Rust toolchain**: stable (see `rust-toolchain.toml`)
+- **At least one ACP Agent**: e.g. [Claude Code](https://claude.ai/code) (provides `claude-agent-acp` command)
+
+### Build from Source
+
+```bash
+git clone https://github.com/crosery/acp-bus.git
+cd acp-bus
+cargo build --release
+```
+
+### Install to System
+
+```bash
+cargo install --path .
+```
+
+### Run
+
+```bash
+# Option 1: cargo run
+cargo run -- tui                       # Start TUI in current directory
+cargo run -- tui --cwd /your/project   # Specify working directory
+
+# Option 2: after installation
+acp-bus tui
+acp-bus tui --cwd /your/project
+
+# Other commands
+acp-bus channels                       # View saved session snapshots
+acp-bus serve --stdio                  # JSON-RPC server mode (Neovim integration)
+```
+
+### Environment Variables
+
+```bash
+RUST_LOG=debug acp-bus tui             # Enable debug logging (output to stderr)
+```
+
+For multiple API endpoints or proxy, configure in `~/.env` or `~/.config/nvim/.env`:
+
+```bash
+# Claude API endpoints
+CLAUDE_API1_BASE_URL=https://your-api1.example.com
+CLAUDE_API1_TOKEN=your-token
+
+# Proxy
+CLAUDE_PROXY=http://proxy:port
+```
+
+## Usage
+
+### Commands
+
+```
+/add w1 claude Your task is...        # Create agent and dispatch task
+@w1 Please expand on X               # Send message to existing agent
+/remove w1                            # Remove agent
+/list                                 # List all agents
+/adapters                             # List available adapters
+/group create debate A B C            # Create group (multi-party discussion)
+/group add debate D                   # Add member to group
+/group list                           # List all groups
+/group remove debate A                # Remove member from group
+/save                                 # Save session snapshot
+/cancel w1                            # Cancel agent's current task
+/help                                 # Help
+/quit                                 # Quit
+```
+
+### Keybindings
+
+```
+Ctrl+C                                # Quit (immediately kill all agents)
+Ctrl+Q                                # Cancel selected agent (all agents on System tab)
+Ctrl+B                                # Toggle sidebar
+Tab                                   # Switch DM/Groups mode
+Ctrl+N / Ctrl+P                       # Switch tabs (navigate popup when active)
+Ctrl+J / Ctrl+K                       # Scroll messages
+Ctrl+D / Ctrl+U                       # Page scroll (10 lines)
+Enter                                 # Send message (confirm selection when popup active)
+Ctrl+Enter                            # Insert newline
+Ctrl+V                                # Paste image from clipboard
+Esc                                   # Dismiss popup
+Mouse scroll                          # Scroll messages
+```
+
+### Image Paste
+
+Copy an image to clipboard, press `Ctrl+V` — the input box shows an `[Image-1]` marker. Paste multiple times to attach multiple images. Backspace on a marker deletes the entire marker and removes the corresponding image. Supports arboard and wl-paste/xclip backends.
+
+### Auto-complete
+
+Type `/` or `@` to auto-trigger a matching popup. Continue typing to filter in real-time. `Ctrl+N/P` to navigate, `Enter` to confirm, `Esc` to dismiss.
+
+## Architecture
+
+```
+                         ┌─────────┐
+                         │   You   │
+                         └────┬────┘
+                              │ @mention / DM / Ctrl+V image
+                    ┌─────────┴─────────┐
+                    │    acp-bus TUI     │
+                    │  ┌──────┐ ┌─────┐ │
+                    │  │Sidebar│ │ Msgs│ │
+                    │  │·Path  │ │     │ │
+                    │  │·Agent │ │     │ │
+                    │  │·Group │ │     │ │
+                    │  │·Keys  │ │     │ │
+                    │  └──┬───┘ └──┬──┘ │
+                    │     │  Input  │    │
+                    └─────┼────────┼────┘
+                          │        │
+          ┌───────────────┼────────┼──────────────┐
+          │            Router (@mention)           │
+          └───┬───────────┼───────────────┬───────┘
+              │           │               │
+        ┌─────┴─────┐ ┌──┴────┐ ┌────────┴────┐
+        │   Main    │ │Worker1│ │   Worker2    │
+        │  (Leader) │ │(Claude│ │(Gemini/Codex)│
+        │ ×1~5 elastic│ c1)  │ │              │
+        └─────┬─────┘ └──┬───┘ └──────┬───────┘
+              │           │            │
+              │     ACP Protocol (stdio JSON-RPC)
+              │           │            │
+        ┌─────┴───────────┴────────────┴───────┐
+        │         Bus (Unix Socket + MCP)       │
+        │                                       │
+        │  bus_send_message   bus_send_and_wait  │
+        │  bus_reply          bus_create_agent    │
+        │  bus_group_message  bus_list_agents     │
+        └──────────┬───────────────┬────────────┘
+                   │               │
+            ┌──────┴──────┐ ┌─────┴──┐
+            │FairScheduler│ │  Store  │
+            │(elastic main│ │(JSON   │
+            │ priority Q) │ │snapshot)│
+            └─────────────┘ └────────┘
+```
+
+### Crate Structure
+
+```
+acp-protocol   ← Pure types, JSON-RPC 2.0 + ACP protocol (incl. Image content)
+acp-core       ← Core: Channel, Agent, Router, FairScheduler, Client, Store, Group, WaitGraph
+acp-bus-mcp    ← MCP server: bus_send/reply/group/create_agent tools
+acp-server     ← Neovim integration (JSON-RPC over stdio)
+acp-tui        ← ratatui TUI (sidebar/input/messages/i18n/clipboard/image)
+```
+
+Dependency: `acp-protocol ← acp-core ← acp-server / acp-bus-mcp / acp-tui ← main`
+
+### Communication
+
+**Agent <-> Bus (ACP Protocol)**
+
+```
+initialize → authenticate? → session/new → session/prompt
+                                              ↓
+                                        session/update (streaming)
+                                              ↓
+                                     reverse requests (fs/*, terminal/*)
+```
+
+**Agent <-> Agent (MCP Tools)**
+
+```
+Async fire-and-forget:  A → bus_send_message(to: "B") → Bus → prompt B
+Sync wait-for-reply:    A → bus_send_and_wait(to: "B") → Bus → prompt B → bus_reply → A unblocked
+Group discussion:       A → bus_group_message(group: "debate") → Bus → prompt members sequentially
+```
+
+**Elastic Main**: When main is busy, auto-spawns main-2, main-3... (up to 5 instances) with the same adapter and system prompt. Idle instances are reused first; all busy → queued.
+
+**Deadlock Detection**: `bus_send_and_wait` uses `WaitGraph` (directed cycle detection) to prevent A-waits-B-waits-A deadlocks.
+
+### Smart Dispatch
+
+```
+User: "Research X and Y for me"
+
+Main Agent replies:
+/add w1 claude You are a tech researcher.
+Task: Research the latest progress on X
+Output: Structured report
+Report back to @main when done
+
+/add w2 claude You are a market analyst.
+Task: Analyze the competitive landscape of Y
+Output: Comparison table
+Report back to @main when done
+
+TUI auto-parses → creates w1, w2 → waits for connection → dispatches tasks
+```
+
+## Supported Adapters
+
+| Adapter | Command | Description |
+|---------|---------|-------------|
+| `claude` | claude-agent-acp | Claude Code (Anthropic) |
+| `c1` | claude-agent-acp | Claude Code API endpoint 1 |
+| `c2` | claude-agent-acp | Claude Code API endpoint 2 |
+| `gemini` | gemini --yolo --acp | Gemini CLI (Google), slow startup (~25s) |
+| `codex` | codex-acp | Codex CLI (OpenAI) |
+
+Connectivity test: `cargo test -p acp-core --test real_agent_connectivity -- --ignored`
+
+## Development
+
+```bash
+cargo build                        # Build
+cargo test                         # Test
+cargo test -p acp-core             # Test single crate
+RUST_LOG=debug cargo run -- tui    # Debug mode (logs to stderr)
+```
+
+## License
+
+MIT
 
 acp-bus 是一个基于 ACP (Agent Communication Protocol) 的多 Agent 协作系统，通过 TUI 界面让用户以"团队管理"的方式调度多个 AI Agent 并行工作、互相通信、自主协作。
 
-## 核心理念
+### 核心理念
 
 **不是让一个 AI 更强，而是让多个 AI 像团队一样协作。**
 
-- **Main Agent = Team Lead**：理解需求、拆解任务、组建团队、质量把关
+- **Main Agent = 团队负责人**：理解需求、拆解任务、组建团队、质量把关
 - **Worker Agent = 全能工程师**：拥有完整工具链，可自主使用 subagent、superpowers 技能、团队通信
 - **Bus = 通信总线**：Agent 间通过 `bus_send_message` 直接点对点通信，无需经过 Main 中转
 
@@ -75,20 +314,41 @@ CLAUDE_PROXY=http://proxy:port
 @w1 补充一下 X 部分               # 给已有 Agent 发消息
 /remove w1                        # 移除 Agent
 /list                             # 查看所有 Agent
+/adapters                         # 列出可用 Adapters
+/group create debate A B C        # 创建群组（多方讨论）
+/group add debate D               # 添加成员到群组
+/group list                       # 列出所有群组
+/group remove debate A            # 从群组移除成员
 /save                             # 保存会话快照
 /cancel w1                        # 取消 Agent 当前任务
+/help                             # 帮助
+/quit                             # 退出
 ```
 
 ### 快捷键
 
 ```
-Ctrl+c                            # 退出（立即终止所有 Agent）
-Ctrl+q                            # 中断选中 Agent 的当前任务
-Ctrl+j/k                          # 上下滚动消息
-Ctrl+d/u                          # 快速翻页（10行）
-Ctrl+n/p                          # 切换 Agent 标签页
+Ctrl+C                            # 退出（立即终止所有 Agent）
+Ctrl+Q                            # 中断选中 Agent（System 标签时中断全部）
+Ctrl+B                            # 收起/展开侧栏
+Tab                               # 切换 私聊/群组 模式
+Ctrl+N / Ctrl+P                   # 切换标签（补全弹出时上下选择）
+Ctrl+J / Ctrl+K                   # 上下滚动消息
+Ctrl+D / Ctrl+U                   # 快速翻页（10行）
+Enter                             # 发送消息（补全弹出时确认选择）
+Ctrl+Enter                        # 输入换行
+Ctrl+V                            # 粘贴剪贴板图片
+Esc                               # 关闭补全弹出
 鼠标滚轮                          # 滚动消息
 ```
+
+### 图片粘贴
+
+复制图片到剪贴板后按 `Ctrl+V`，输入框会显示 `[Image-1]` 标记。可以多次粘贴叠加多张图片。Backspace 在标记上会整块删除并移除对应图片。支持 arboard 和 wl-paste/xclip 两种后端。
+
+### 自动补全
+
+输入 `/` 或 `@` 时自动弹出匹配列表，继续输入实时过滤。`Ctrl+N/P` 上下选择，`Enter` 确认，`Esc` 关闭。
 
 ## 架构
 
@@ -96,22 +356,27 @@ Ctrl+n/p                          # 切换 Agent 标签页
                          ┌─────────┐
                          │   You   │
                          └────┬────┘
-                              │ @mention / 直接对话
+                              │ @mention / 直接对话 / Ctrl+V 图片
                     ┌─────────┴─────────┐
                     │    acp-bus TUI     │
-                    │  ┌─────┐ ┌─────┐  │
-                    │  │Input│ │ Msgs│  │
-                    │  └──┬──┘ └──┬──┘  │
-                    └─────┼───────┼─────┘
-                          │       │
-          ┌───────────────┼───────┼───────────────┐
+                    │  ┌──────┐ ┌─────┐ │
+                    │  │侧边栏│ │消息区│ │
+                    │  │·项目名│ │     │ │
+                    │  │·Agent │ │     │ │
+                    │  │·群组  │ │     │ │
+                    │  │·快捷键│ │     │ │
+                    │  └──┬───┘ └──┬──┘ │
+                    │     │  输入框  │    │
+                    └─────┼────────┼────┘
+                          │        │
+          ┌───────────────┼────────┼──────────────┐
           │            Router (@mention)           │
           └───┬───────────┼───────────────┬───────┘
               │           │               │
         ┌─────┴─────┐ ┌──┴────┐ ┌────────┴────┐
         │   Main    │ │Worker1│ │   Worker2    │
-        │  (Leader) │ │(Claude│ │(Gemini/Codex)│
-        │ claude    │ │  c1)  │ │              │
+        │  (负责人) │ │(Claude│ │(Gemini/Codex)│
+        │ ×1~5 弹性 │ │  c1)  │ │              │
         └─────┬─────┘ └──┬───┘ └──────┬───────┘
               │           │            │
               │     ACP Protocol (stdio JSON-RPC)
@@ -119,44 +384,31 @@ Ctrl+n/p                          # 切换 Agent 标签页
         ┌─────┴───────────┴────────────┴───────┐
         │         Bus (Unix Socket + MCP)       │
         │                                       │
-        │  bus_send_message  bus_list_agents     │
-        │  (Agent 间点对点通信，无需经过 Main)     │
+        │  bus_send_message   bus_send_and_wait  │
+        │  bus_reply          bus_create_agent    │
+        │  bus_group_message  bus_list_agents     │
         └──────────┬───────────────┬────────────┘
                    │               │
-            ┌──────┴──┐     ┌──────┴──┐
-            │Scheduler│     │  Store   │
-            │(串行队列)│     │(JSON 快照)│
-            └─────────┘     └─────────┘
+            ┌──────┴──────┐ ┌─────┴──┐
+            │FairScheduler│ │  Store  │
+            │(弹性 main   │ │(JSON   │
+            │ 优先级队列)  │ │ 快照)   │
+            └─────────────┘ └────────┘
 ```
-
-### Crate 结构
-
-```
-acp-protocol  ← 纯类型，JSON-RPC 2.0 + ACP 协议定义
-acp-core      ← 核心逻辑：Channel、Agent、Router、Scheduler、Client、Store
-acp-server    ← Neovim 集成（JSON-RPC over stdio）
-acp-tui       ← ratatui TUI 界面
-```
-
-依赖方向：`acp-protocol ← acp-core ← acp-server / acp-tui ← main`
 
 ### 通信机制
-
-**Agent <-> Bus（ACP 协议）**
-
-```
-initialize → authenticate? → session/new → session/prompt
-                                              ↓
-                                        session/update (streaming)
-                                              ↓
-                                     reverse requests (fs/*, terminal/*)
-```
 
 **Agent <-> Agent（MCP 工具）**
 
 ```
-Agent A → bus_send_message(to: "B", content: "...") → Bus → prompt Agent B
+异步单向:   Agent A → bus_send_message(to: "B", ...) → Bus → prompt Agent B
+同步等待:   Agent A → bus_send_and_wait(to: "B", ...) → Bus → prompt B → bus_reply → A 解除阻塞
+群组讨论:   Agent A → bus_group_message(group: "debate") → Bus → 按顺序逐个 prompt 成员
 ```
+
+**弹性 Main**：当 main 忙碌时，自动扩展 main-2, main-3...（最多 5 个实例），用同样的 adapter 和 system prompt。空闲实例优先复用，全忙时排队。
+
+**死锁检测**：`bus_send_and_wait` 通过 `WaitGraph`（有向图环检测）防止 A 等 B 等 A 的死锁。
 
 ### 智能派发
 
@@ -184,7 +436,7 @@ TUI 自动解析 → 创建 w1, w2 → 等待连接 → 派发任务
 | `claude` | claude-agent-acp | Claude Code (Anthropic) |
 | `c1` | claude-agent-acp | Claude Code API 线路 1 |
 | `c2` | claude-agent-acp | Claude Code API 线路 2 |
-| `gemini` | gemini --yolo --acp | Gemini CLI (Google)，启动较慢（~25s），API 429 时静默无响应 |
+| `gemini` | gemini --yolo --acp | Gemini CLI (Google)，启动较慢（~25s） |
 | `codex` | codex-acp | Codex CLI (OpenAI) |
 
 连通性测试：`cargo test -p acp-core --test real_agent_connectivity -- --ignored`
@@ -197,10 +449,6 @@ cargo test                         # 测试
 cargo test -p acp-core             # 测试单个 crate
 RUST_LOG=debug cargo run -- tui    # Debug 模式（日志输出到 stderr）
 ```
-
-## Roadmap
-
-详见 [docs/roadmap.md](docs/roadmap.md)
 
 ## License
 
